@@ -1,0 +1,902 @@
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Linq;
+using System.Reflection;
+using System.Threading;
+using System.Threading.Tasks;
+using System.Windows;
+using System.Windows.Automation;
+using System.Windows.Controls;
+using System.Windows.Forms.Integration;
+using System.Windows.Input;
+using System.Windows.Interop;
+using System.Windows.Media;
+using System.Windows.Shell;
+using System.Windows.Threading;
+using Microsoft.Win32;
+using P1.C1.Components.Docking.WPF;
+using P1.C1.Components.Docking.WPF.Floating;
+using P1.C1.Components.InspectorTools;
+using P1.C1.Controls.Inspector.Dummy;
+using P1.C1.Core.Interfaces;
+using P1.C1.Core.Messaging;
+using P1.C1.Core.Messaging.ModelMessages;
+using P1.C1.Core.ModelEntities;
+using P1.C1.Framework.Messaging;
+using P1.C1.ViewModels.Menu;
+using P1.C1.ViewModels.Notification;
+using P1.C1.ViewModels.Tools.InspectorTool;
+using P1.C1.WPF.Styles;
+
+internal static class SpektraFilmTool
+{
+    private const BindingFlags InstanceNonPublic = BindingFlags.Instance | BindingFlags.NonPublic;
+
+    public static HostedTool Create(System.Windows.Forms.Form window, IMessageBusProvider bus, ICaptureOneDocument document)
+    {
+        // The base class loads BAML from CaptureOne.dll, so use the host's empty tool.
+        var tool = new DummyInspectorTool(bus);
+        var toolType = typeof(InspectorToolWpf);
+        var registration = (ILifeCycleRegistrationService?)toolType.GetProperty("LifeCycleEventRegistration", InstanceNonPublic)?.GetValue(tool)
+            ?? throw new MissingMemberException(toolType.FullName, "LifeCycleEventRegistration");
+        var initialize = toolType.GetMethod("Initialize", InstanceNonPublic, null,
+            new[] { typeof(UserControl), typeof(IInspectorToolContentViewModel), typeof(InspectorToolHeaderViewModel) }, null)
+            ?? throw new MissingMethodException(toolType.FullName, "Initialize");
+        var hosted = new HostedTool(window, tool, document);
+        try
+        {
+            var header = hosted.CreateDockedHeader(registration);
+            tool.SetProperties(new Dictionary<string, object>());
+            initialize.Invoke(tool, new object[] { hosted.DockedContent, EmptyInspectorToolContentViewModel.Instance, header });
+            tool.DockingLogic.DockableArea = DockableArea.ScrollableArea;
+            // Move the content between windows without registering the dummy tool as a native workspace tool.
+            tool.DockingLogic.CanDragDrop = false;
+            return hosted;
+        }
+        catch
+        {
+            hosted.Dispose();
+            tool.Dispose();
+            throw;
+        }
+    }
+
+    internal sealed class HostedTool : IDisposable
+    {
+        private static readonly Uri CaptureOneStyle = new("pack://application:,,,/CaptureOne;component/WPF/Styles/DefaultStyle.xaml");
+        private readonly System.Windows.Forms.Form mainWindow;
+        private readonly LookPanel panel;
+        private DockableWindow? floating;
+        private ScrollViewer? floatingScroll;
+        private Rect? floatingBounds;
+        private bool disposed;
+
+        internal HostedTool(System.Windows.Forms.Form mainWindow, InspectorToolWpf tool, ICaptureOneDocument document)
+        {
+            this.mainWindow = mainWindow;
+            Tool = tool;
+            panel = new LookPanel(mainWindow, document);
+            Holder = new ContentControl { Content = panel, HorizontalContentAlignment = HorizontalAlignment.Stretch };
+            DockedContent = new UserControl { Content = Holder };
+        }
+
+        internal InspectorToolWpf Tool { get; }
+        internal UserControl DockedContent { get; }
+        private ContentControl Holder { get; }
+        internal bool IsSpektraExportActive => !disposed && panel.IsSpektraExportActive;
+        internal void CheckSelectionAndSave()
+        {
+            panel.SyncSelection();
+            panel.FlushLooks();
+        }
+        internal Task<bool> ExportAsync(Window? owner) => panel.ExportAsync(useRecipeSize: true, owner);
+        internal InspectorToolHeaderViewModel CreateDockedHeader(ILifeCycleRegistrationService registration) =>
+            new InspectorToolHeaderViewModelBuilder("Film Tools", () => Tool.Document, registration)
+                .DoShowActionMenu(new PanelActionMenu(() => floating is null ? "Float Tool" : "Show Floating Tool", ShowFloating))
+                .Build();
+
+        private void ShowFloating()
+        {
+            if (disposed)
+                return;
+            if (floating is not null)
+            {
+                if (floating.WindowState == WindowState.Minimized)
+                    floating.WindowState = WindowState.Normal;
+                floating.Activate();
+                return;
+            }
+
+            DockableWindow? window = null;
+            try
+            {
+                var scroll = new ScrollViewer
+                {
+                    VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+                    HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
+                };
+                window = CreateFloatingWindow(scroll);
+                if (floatingBounds is { } bounds)
+                {
+                    window.WindowStartupLocation = WindowStartupLocation.Manual;
+                    window.Left = bounds.Left;
+                    window.Top = bounds.Top;
+                    window.Width = bounds.Width;
+                    window.Height = bounds.Height;
+                }
+                else if (DockedContent.ActualWidth > 0)
+                {
+                    window.Width = Math.Max(window.MinWidth, DockedContent.ActualWidth);
+                }
+
+                new WindowInteropHelper(window).Owner = mainWindow.Handle;
+                ElementHost.EnableModelessKeyboardInterop(window);
+                window.Closed += OnFloatingClosed;
+                floating = window;
+                floatingScroll = scroll;
+                Holder.Content = null;
+                scroll.Content = panel;
+                window.Show();
+                StartupHook.Log("Film Tools panel is floating.");
+            }
+            catch (Exception error)
+            {
+                if (window is not null)
+                {
+                    if (ReferenceEquals(window, floating))
+                        RestoreDock(window);
+                    if (!window.IsClosed)
+                        window.Close();
+                }
+                StartupHook.Log(error.ToString());
+            }
+        }
+
+        private static DockableWindow CreateFloatingWindow(ScrollViewer scroll)
+        {
+            var layout = new DockPanel
+            {
+                Background = DefaultConstants.CaptureOneBrushPanelBackground,
+                Margin = new Thickness(FloatingWindowConstants.BorderThicknessUnscaled),
+            };
+            // Like Capture One's FloatingToolsHostPanel, provide implicit styles to the tool's whole tree.
+            layout.Resources.MergedDictionaries.Add(new SharedResourceDictionary { Source = CaptureOneStyle });
+            var window = new DockableWindow
+            {
+                Title = "Film Tools",
+                Content = layout,
+                Background = DefaultConstants.CaptureOneBrushDarkSeparator,
+                Width = 360,
+                Height = 620,
+                MinWidth = 290,
+                MinHeight = 260,
+                WindowStartupLocation = WindowStartupLocation.CenterOwner,
+            };
+            var header = new InspectorToolHeader
+            {
+                Background = DefaultConstants.CaptureOneBrushHeaderBackground,
+                DataContext = new InspectorToolHeaderViewModel("Film Tools",
+                    argActionMenuGenerator: new PanelActionMenu(() => "Dock Tool", window.Close)),
+            };
+            // The Inspector header handles its action-menu input before it reaches this handler.
+            header.MouseLeftButtonDown += (_, args) =>
+            {
+                if (args.LeftButton == MouseButtonState.Pressed && args.ClickCount == 1)
+                {
+                    args.Handled = true;
+                    window.DragMove();
+                }
+            };
+            DockPanel.SetDock(header, Dock.Top);
+            layout.Children.Add(header);
+            layout.Children.Add(scroll);
+            return window;
+        }
+
+        private void OnFloatingClosed(object? sender, EventArgs args)
+        {
+            if (sender is not DockableWindow window || !ReferenceEquals(window, floating))
+                return;
+            var bounds = window.RestoreBounds;
+            if (!bounds.IsEmpty)
+                floatingBounds = bounds;
+            RestoreDock(window);
+            if (!disposed)
+                StartupHook.Log("Film Tools panel is docked.");
+        }
+
+        private void RestoreDock(DockableWindow window)
+        {
+            window.Closed -= OnFloatingClosed;
+            if (floatingScroll is not null)
+                floatingScroll.Content = null;
+            floatingScroll = null;
+            floating = null;
+            if (!disposed)
+                Holder.Content = panel;
+        }
+
+        private sealed class PanelActionMenu(Func<string> label, Action action) : IActionMenuGenerator
+        {
+            public bool HasItems => true;
+
+            public IEnumerable<IMenuItemViewModel> Generate()
+            {
+                yield return new CommandMenuItemViewModel(label(), action);
+            }
+        }
+
+        public void Dispose()
+        {
+            if (disposed)
+                return;
+            disposed = true;
+            panel.Dispose();
+            if (floating is { } window)
+            {
+                RestoreDock(window);
+                window.Close();
+            }
+            Holder.Content = null;
+        }
+    }
+
+    private sealed class LookPanel : UserControl, IDisposable, IHandleMessage<PrimaryVariantChangedMessage>
+    {
+        private const string DefaultFilm = "kodak_portra_400";
+        private const string DefaultPaper = "kodak_portra_endura";
+        private const string DefaultSpectralMethod = "hanatos2025";
+        private readonly object window;
+        private readonly ICaptureOneDocument document;
+        private readonly ISelectedCollectionsProvider selections;
+        private readonly VariantLookStore looks;
+        private readonly ComboBox mode = new() { DisplayMemberPath = nameof(Stock.Label) };
+        private readonly ComboBox film = new() { DisplayMemberPath = nameof(Stock.Label) };
+        private readonly ComboBox paper = new() { DisplayMemberPath = nameof(Stock.Label) };
+        private readonly ComboBox spectralMethod = new() { DisplayMemberPath = nameof(Stock.Label) };
+        private readonly ComboBox filmPushPullMode = new() { DisplayMemberPath = nameof(Stock.Label) };
+        private readonly CheckBox scanInvert = new() { Content = "Invert negative scan", Margin = new Thickness(0, 5, 0, 2) };
+        private readonly CheckBox enableSpektraFilm = new()
+        {
+            Content = "Enable Film Tools",
+            IsChecked = true,
+            Margin = new Thickness(0, 0, 0, 6),
+        };
+        private readonly TextBlock status = new() { Margin = new Thickness(0, 5, 0, 0), TextWrapping = TextWrapping.Wrap };
+        private readonly TextBlock saveError = new() { TextWrapping = TextWrapping.Wrap, Visibility = Visibility.Collapsed };
+        private readonly StackPanel controls = new() { IsEnabled = false };
+        private readonly NativeSlider exposure;
+        private readonly NativeSlider printExposure;
+        private readonly NativeSlider strength;
+        private readonly ComboBox grainType = new()
+        {
+            ItemsSource = new[] { "Fine Grain", "Silver Rich", "Soft", "Cubic Grain", "Tabular Grain", "Harsh" },
+            SelectedIndex = 2,
+        };
+        private readonly NativeSlider grainImpact = new("Grain impact", 0, 100, 25, 1);
+        private readonly NativeSlider grainSize = new("Grain granularity", 0, 100, 50, 1);
+        private static readonly GrainControls DefaultGrain = new(2, 25, 50);
+        private readonly StackPanel printing = new();
+        private readonly Dictionary<string, (NativeSlider Slider, double Default)> development = new();
+        private readonly SpatialPreview opticalPreview;
+        private Guid? displayedVariant;
+        private bool selectionQueued;
+        private LookOptions? options;
+        private LookBaker? baker;
+        private bool settingValues;
+        private bool disposed;
+
+        internal LookPanel(object window, ICaptureOneDocument document)
+        {
+            this.window = window;
+            this.document = document;
+            selections = (ISelectedCollectionsProvider)document;
+            var catalog = ApprovedCatalog.SelectedDatabase ?? throw new InvalidOperationException("No Film Tools catalog selected.");
+            var root = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "FilmToolsForCaptureOne", "Variant looks");
+            looks = new VariantLookStore(root, catalog);
+            Foreground = Brushes.Gainsboro;
+            enableSpektraFilm.IsEnabled = false;
+            var layout = new StackPanel { Margin = new Thickness(8, 5, 8, 9) };
+            layout.Children.Add(enableSpektraFilm);
+            layout.Children.Add(saveError);
+            layout.Children.Add(controls);
+            Content = layout;
+            AddStock(controls, "Processing mode", mode, () =>
+            {
+                if (settingValues)
+                    return;
+                SetModeControls();
+                RefreshLook();
+            });
+            AddStock(controls, "Film stock", film, () =>
+            {
+                SetScanOptions();
+                RefreshLook();
+            });
+            scanInvert.Checked += (_, _) => RefreshLook();
+            scanInvert.Unchecked += (_, _) => RefreshLook();
+            controls.Children.Add(scanInvert);
+            AddStock(controls, "Print stock", paper);
+            exposure = AddSlider(controls, "Film exposure", -8, 8, 0, 0.1, "EV");
+            printExposure = AddSlider(controls, "Print exposure", -5, 5, 0, 0.1, "EV");
+            printExposure.ToolTip = "More light on the print stock makes the result darker.";
+            strength = AddSlider(controls, "Look strength", 0, 100, 100, 1, "%");
+            opticalPreview = SpatialPreview.BuildForPanel(window, CurrentSettings, UseSelectedLook);
+            opticalPreview.SettingsChanged += SaveLook;
+            opticalPreview.TrackSliderDrag(exposure);
+            opticalPreview.TrackSliderDrag(printExposure);
+            opticalPreview.TrackSliderDrag(strength);
+            controls.Children.Add(opticalPreview.LiveControls);
+
+            var buttons = new WrapPanel { Margin = new Thickness(0, 8, 0, 0) };
+            buttons.Children.Add(Button("Defaults", () =>
+            {
+                if (options is not null)
+                {
+                    ApplyControls(null, null);
+                    SaveLook();
+                }
+                return Task.CompletedTask;
+            }));
+            controls.Children.Add(buttons);
+            controls.Children.Add(status);
+            controls.Children.Add(MakeFilmControls());
+            controls.Children.Add(MakePrintControls());
+            controls.Children.Add(MakeAdvancedControls());
+            controls.Children.Add(MakeGrainControls());
+            controls.Children.Add(opticalPreview.Element);
+            controls.Children.Add(MakeFileControls());
+
+            enableSpektraFilm.Checked += (_, _) => OnEnabledChanged();
+            enableSpektraFilm.Unchecked += (_, _) => OnEnabledChanged();
+            Loaded += (_, _) => LoadStocks();
+            document.MessageBus.Subscribe<PrimaryVariantChangedMessage>(this);
+            selections.CollectionsSelectionChanged += OnCollectionsSelectionChanged;
+        }
+
+        public Guid Id { get; } = Guid.NewGuid();
+
+        public void Handle(PrimaryVariantChangedMessage message)
+        {
+            if (ReferenceEquals(message.Collection, selections.PrimarySelectedCollection))
+                ScheduleSelectionSync();
+        }
+
+        private void OnCollectionsSelectionChanged(object? sender, CollectionsSelectionChangedEventArgs args) => ScheduleSelectionSync();
+
+        private void ScheduleSelectionSync()
+        {
+            // Read the primary variant after the host finishes processing the selection.
+            if (disposed || selectionQueued)
+                return;
+            selectionQueued = true;
+            Dispatcher.BeginInvoke(DispatcherPriority.DataBind, new Action(() =>
+            {
+                selectionQueued = false;
+                SyncSelection();
+            }));
+        }
+
+        private bool IsSpektraFilmEnabled => !disposed && enableSpektraFilm.IsChecked == true;
+
+        private void OnEnabledChanged()
+        {
+            if (settingValues)
+                return;
+            UpdateEnabledState();
+            SaveLook();
+        }
+
+        private void UpdateEnabledState()
+        {
+            if (disposed)
+                return;
+            var enabled = displayedVariant is not null && IsSpektraFilmEnabled;
+            enableSpektraFilm.IsEnabled = displayedVariant is not null && StocksReady;
+            controls.IsEnabled = enabled && StocksReady;
+            opticalPreview.SetEnabled(enabled);
+        }
+
+        public void Dispose()
+        {
+            if (disposed)
+                return;
+            FlushLooks();
+            disposed = true;
+            selections.CollectionsSelectionChanged -= OnCollectionsSelectionChanged;
+            document.MessageBus.Unsubscribe<PrimaryVariantChangedMessage>(this);
+            opticalPreview.SetEnabled(false);
+            baker?.Dispose();
+            baker = null;
+        }
+
+        private FrameworkElement MakeFilmControls()
+        {
+            var section = new StackPanel();
+            AddDevelopment(section, "film_gamma", "Negative gamma", 0.1, 2, 1, 0.05);
+            filmPushPullMode.ItemsSource = new[] { new Stock("standard", "Standard"), new Stock("experimental", "Experimental") };
+            filmPushPullMode.SelectedIndex = 0;
+            AddStock(section, "Push / pull model", filmPushPullMode);
+            AddDevelopment(section, "film_push_pull", "Film push / pull", -2, 2, 0, 0.1, "EV");
+            AddDevelopment(section, "negative_bleach_bypass", "Negative bleach bypass", 0, 1, 0, 0.01, "%", 100);
+            AddDevelopment(section, "negative_leuco_cyan", "Negative leuco cyan", 0, 2, 1, 0.05);
+            AddDevelopment(section, "uv_cutoff", "UV cutoff", 380, 450, 380, 1, "nm");
+            AddDevelopment(section, "ir_cutoff", "IR cutoff", 600, 780, 780, 1, "nm");
+            return Section("Film development", section);
+        }
+
+        private FrameworkElement MakePrintControls()
+        {
+            AddDevelopment(printing, "print_gamma", "Print gamma", 0.1, 2, 1, 0.05);
+            AddDevelopment(printing, "print_push_pull", "Print push / pull", -2, 2, 0, 0.1, "EV");
+            AddDevelopment(printing, "print_shadows", "Print shadow shape", -1, 1, 0, 0.05);
+            AddDevelopment(printing, "print_highlights", "Print highlight shape", -1, 1, 0, 0.05);
+            AddDevelopment(printing, "print_exhaustion", "Developer exhaustion", 0, 1, 0, 0.01, "%", 100);
+            AddDevelopment(printing, "print_bleach_bypass", "Print bleach bypass", 0, 1, 0, 0.01, "%", 100);
+            AddDevelopment(printing, "cyan_filter", "Cyan filtration", 0, 120, 0, 1, "CC");
+            AddDevelopment(printing, "magenta_filter", "Magenta filter shift", -60, 60, 0, 1, "CC");
+            AddDevelopment(printing, "yellow_filter", "Yellow filter shift", -60, 60, 0, 1, "CC");
+            AddDevelopment(printing, "preflash_exposure", "Preflash exposure", 0, 1, 0, 0.01);
+            AddDevelopment(printing, "preflash_magenta", "Preflash magenta", -60, 60, 0, 1, "CC");
+            AddDevelopment(printing, "preflash_yellow", "Preflash yellow", -60, 60, 0, 1, "CC");
+            return Section("Enlarger and print", printing);
+        }
+
+        private FrameworkElement MakeAdvancedControls()
+        {
+            var section = new StackPanel();
+            AddStock(section, "Spectral reconstruction", spectralMethod);
+            AddDevelopment(section, "dir_amount", "DIR coupler amount", 0, 2, 1, 0.05);
+            AddDevelopment(section, "dir_same_layer", "Same-layer inhibition", 0, 2, 1, 0.05);
+            AddDevelopment(section, "dir_interlayer", "Interlayer inhibition", 0, 2, 1, 0.05);
+            return Section("Spectral reconstruction and DIR", section);
+        }
+
+        private void AddDevelopment(StackPanel section, string key, string label, double min, double max,
+            double initial, double step, string unit = "", double displayScale = 1)
+        {
+            var slider = AddSlider(section, label, min, max, initial, step, unit, displayScale);
+            development.Add(key, (slider, initial));
+        }
+
+        private static Expander Section(string header, FrameworkElement content) =>
+            new() { Header = header, Content = content, Margin = new Thickness(0, 7, 0, 0) };
+
+        private FrameworkElement MakeFileControls()
+        {
+            var section = new StackPanel();
+            var presets = new WrapPanel { Margin = new Thickness(0, 5, 0, 3) };
+            presets.Children.Add(Button("Save preset…", () =>
+            {
+                if (CurrentSettings() is { } settings)
+                {
+                    var picker = new SaveFileDialog { Filter = "Film Tools preset|*.spektra.json", FileName = "Film look.spektra.json" };
+                    if (picker.ShowDialog() == true)
+                    {
+                        var preset = new PanelPreset(settings, opticalPreview.CaptureSettings(), 1);
+                        Run(() => PanelFiles.WritePreset(picker.FileName, preset), "Preset saved.");
+                    }
+                }
+                return Task.CompletedTask;
+            }));
+            presets.Children.Add(Button("Load preset…", LoadPresetAsync));
+            section.Children.Add(presets);
+
+            var export = new WrapPanel { Margin = new Thickness(0, 5, 0, 0) };
+            export.Children.Add(Button("Export with Film Tools…", () => ExportAsync(useRecipeSize: false)));
+            export.Children.Add(Button("Export 33-point LUT…", () => ExportLutAsync(33)));
+            export.Children.Add(Button("Export 65-point LUT…", () => ExportLutAsync(65)));
+            section.Children.Add(export);
+            return Section("Presets and LUT export", section);
+        }
+
+        internal bool IsSpektraExportActive => SyncSelection() && IsSpektraFilmEnabled;
+        internal Task<bool> ExportAsync(bool useRecipeSize, Window? owner = null) =>
+            IsSpektraExportActive ? opticalPreview.ExportAsync(useRecipeSize, owner) : Task.FromResult(false);
+        internal bool StocksReady => !disposed && options is not null;
+        private async Task LoadPresetAsync()
+        {
+            if (!SyncSelection())
+                return;
+            var variant = displayedVariant;
+            try
+            {
+                var picker = new OpenFileDialog { Filter = "Film Tools preset|*.spektra.json", CheckFileExists = true };
+                if (picker.ShowDialog() != true)
+                    return;
+                var preset = await Task.Run(() => PanelFiles.ReadPreset<PanelPreset>(picker.FileName));
+                if (preset.SchemaVersion is < 0 or > 1)
+                    throw new InvalidDataException("This preset version requires a different SpektraFilm build.");
+                if (preset.Look is not { } settings)
+                    throw new InvalidDataException("The preset contains no look settings.");
+                if (!SyncSelection() || displayedVariant != variant)
+                    return;
+                ApplyControls(settings, preset.Optics);
+                SaveLook();
+            }
+            catch (Exception error)
+            {
+                Report(error);
+            }
+        }
+
+        private sealed record PanelPreset(LookSettings Look, SpatialPreview.Settings? Optics, int SchemaVersion = 0);
+
+        private void ApplyControls(LookSettings? look, SpatialPreview.Settings? optics, bool? enabled = null,
+            GrainControls? grain = null)
+        {
+            settingValues = true;
+            try
+            {
+                if (look is null)
+                    SetDefaults();
+                else
+                    SetPreset(look);
+                opticalPreview.LoadSettings(optics);
+                if (enabled is { } useFilmTools)
+                {
+                    enableSpektraFilm.IsChecked = useFilmTools;
+                    SetGrainControls(grain ?? DefaultGrain);
+                }
+            }
+            finally
+            {
+                settingValues = false;
+            }
+            UpdateEnabledState();
+        }
+
+        internal bool SyncSelection()
+        {
+            if (!StocksReady)
+                return false;
+            Guid variant;
+            try
+            {
+                variant = HostProfile.ReadSelection(window).Variant.UUID;
+            }
+            catch (InvalidOperationException)
+            {
+                variant = Guid.Empty;
+            }
+            if (variant != Guid.Empty)
+            {
+                UseSelectedLook(variant);
+                return true;
+            }
+            if (displayedVariant is not null)
+            {
+                displayedVariant = null;
+                UpdateEnabledState();
+            }
+            return false;
+        }
+
+        private bool UseSelectedLook(Guid variant)
+        {
+            if (!StocksReady || variant == Guid.Empty)
+                return false;
+            if (displayedVariant != variant)
+            {
+                status.Text = string.Empty;
+                FlushLooks();
+                displayedVariant = variant;
+                try
+                {
+                    var saved = looks.Read(variant);
+                    ApplyControls(saved?.Look, saved?.Optics, saved?.Enabled ?? true, saved?.Grain);
+                }
+                catch (Exception error)
+                {
+                    ApplyControls(null, null, true);
+                    status.Text = $"Could not load this image’s Film Tools look. {error.Message}";
+                    StartupHook.Log(status.Text);
+                }
+            }
+            return IsSpektraFilmEnabled;
+        }
+
+        private void SaveLook()
+        {
+            if (settingValues || !StocksReady || displayedVariant is not { } variant || CurrentSettings() is not { } look)
+                return;
+            // The key belongs to the displayed controls, even if the host selection has just changed.
+            look = look with { ScanInvert = scanInvert.IsChecked == true };
+            var grain = new GrainControls(grainType.SelectedIndex, grainImpact.Value, grainSize.Value);
+            looks.Queue(variant, new VariantLook(look, opticalPreview.CaptureSettings(), IsSpektraFilmEnabled, Grain: grain));
+            FlushLooks();
+        }
+
+        internal void FlushLooks()
+        {
+            try
+            {
+                looks.Flush();
+                saveError.Visibility = Visibility.Collapsed;
+            }
+            catch (Exception error)
+            {
+                var message = $"Film Tools could not save your look. {error.Message}";
+                if (saveError.Visibility != Visibility.Visible || saveError.Text != message)
+                    StartupHook.Log(message);
+                saveError.Text = message;
+                saveError.Visibility = Visibility.Visible;
+            }
+        }
+
+        private void SetPreset(LookSettings settings)
+        {
+            var available = options ?? throw new InvalidOperationException("The available stocks are still loading.");
+            static Stock Find(Stock[] stocks, string id) => stocks.FirstOrDefault(option => option.Id == id)
+                ?? throw new InvalidDataException("This preset uses a stock or mode that is unavailable.");
+            var selectedMode = Find(available.Modes, settings.Mode);
+            var selectedFilm = Find(available.Films, settings.Film);
+            var selectedPaper = Find(available.Papers, settings.Paper);
+            var selectedMethod = Find(available.SpectralMethods, settings.SpectralMethod);
+            if (selectedMode.Id == "print" && selectedFilm.Kind == "positive")
+                throw new InvalidDataException("This positive film needs scan mode.");
+
+            var previousSetting = settingValues;
+            settingValues = true;
+            try
+            {
+                mode.SelectedItem = selectedMode;
+                SetModeControls();
+                film.SelectedItem = selectedFilm;
+                paper.SelectedItem = selectedPaper;
+                spectralMethod.SelectedItem = selectedMethod;
+                filmPushPullMode.SelectedIndex = settings.FilmPushPullMode == "experimental" ? 1 : 0;
+                scanInvert.IsChecked = settings.ScanInvert;
+                exposure.Value = settings.Exposure;
+                printExposure.Value = settings.PrintExposure;
+                strength.Value = settings.Strength * 100;
+                foreach (var (key, entry) in development)
+                    entry.Slider.Value = settings.Development?.GetValueOrDefault(key, entry.Default) ?? entry.Default;
+            }
+            finally
+            {
+                settingValues = previousSetting;
+            }
+        }
+
+        private async Task ExportLutAsync(int resolution)
+        {
+            if (!IsSpektraFilmEnabled || CurrentSettings() is not { } settings)
+                return;
+            try
+            {
+                if (!LookBaker.IsAvailable)
+                    throw new InvalidOperationException("Run Setup LUT Export.cmd to enable optional LUT export.");
+                var picker = new SaveFileDialog { Filter = "3D LUT|*.cube", FileName = $"Film Tools sRGB {resolution}.cube" };
+                if (picker.ShowDialog() != true)
+                    return;
+                status.Text = "Baking the sRGB LUT…";
+                var cube = await (baker ??= new LookBaker()).ExportLutAsync(settings, resolution, CancellationToken.None);
+                if (!disposed)
+                {
+                    await File.WriteAllTextAsync(picker.FileName, cube);
+                    status.Text = "LUT exported.";
+                }
+            }
+            catch (Exception error)
+            {
+                if (!disposed)
+                    Report(error);
+            }
+        }
+
+        private FrameworkElement MakeGrainControls()
+        {
+            var section = new StackPanel { Margin = new Thickness(0, 4, 0, 0) };
+            AutomationProperties.SetName(grainType, "Grain type");
+            section.Children.Add(grainType);
+            section.Children.Add(grainImpact);
+            section.Children.Add(grainSize);
+            grainType.SelectionChanged += (_, _) =>
+            {
+                grainSize.IsEnabled = grainType.SelectedIndex != 0;
+                SaveLook();
+            };
+            grainImpact.ValueChanged += (_, _) => SaveLook();
+            grainSize.ValueChanged += (_, _) => SaveLook();
+
+            var buttons = new WrapPanel { Margin = new Thickness(0, 5, 0, 0) };
+            buttons.Children.Add(Button("Apply grain", () =>
+            {
+                if (SyncSelection() && displayedVariant is { } variant && IsSpektraFilmEnabled)
+                    Run(() => NativeGrain.Apply(window, variant,
+                        grainType.SelectedIndex, grainImpact.Value, grainSize.Value), "Capture One Grain applied.");
+                return Task.CompletedTask;
+            }));
+            buttons.Children.Add(Button("Restore grain", () =>
+            {
+                Run(() =>
+                {
+                    var current = NativeGrain.Read(window);
+                    if (!NativeGrain.HasApplied(window, current.VariantId))
+                        throw new InvalidOperationException("No grain adjustment from this panel is active.");
+                    NativeGrain.Restore(window, current.VariantId);
+                    var original = NativeGrain.Read(window);
+                    if (SyncSelection() && displayedVariant == original.VariantId)
+                    {
+                        SetGrainControls(new GrainControls(original.Type, original.Impact, original.Granularity));
+                        SaveLook();
+                    }
+                }, "Prior grain restored.");
+                return Task.CompletedTask;
+            }));
+            section.Children.Add(buttons);
+            return new Expander { Header = "Capture One Grain", Content = section, Margin = new Thickness(0, 9, 0, 0) };
+        }
+
+        private void SetGrainControls(GrainControls grain)
+        {
+            var wasSetting = settingValues;
+            settingValues = true;
+            try
+            {
+                grainType.SelectedIndex = Math.Clamp(grain.Type, 0, grainType.Items.Count - 1);
+                grainImpact.Value = grain.Impact;
+                grainSize.Value = grain.Granularity;
+            }
+            finally
+            {
+                settingValues = wasSetting;
+            }
+        }
+
+        private void AddStock(StackPanel section, string label, ComboBox chooser, Action? changed = null)
+        {
+            section.Children.Add(new TextBlock { Text = label, Margin = new Thickness(0, 4, 0, 2) });
+            AutomationProperties.SetName(chooser, label);
+            section.Children.Add(chooser);
+            chooser.SelectionChanged += (_, _) => (changed ?? RefreshLook)();
+        }
+
+        private NativeSlider AddSlider(StackPanel section, string title, double min, double max, double initial, double step,
+            string unit = "", double displayScale = 1)
+        {
+            var slider = new NativeSlider(title, min, max, initial, step, unit, displayScale);
+            slider.ValueChanged += (_, _) => RefreshLook();
+            if (opticalPreview is not null)
+                opticalPreview.TrackSliderDrag(slider);
+            section.Children.Add(slider);
+            return slider;
+        }
+
+        private void LoadStocks()
+        {
+            if (disposed || options is not null)
+                return;
+            try
+            {
+                var root = Environment.GetEnvironmentVariable("SPEKTRAFILM_ROOT")
+                    ?? throw new InvalidOperationException("Start Capture One from the Film Tools launcher.");
+                var available = System.Text.Json.JsonSerializer.Deserialize<LookOptions>(File.ReadAllText(Path.Combine(root, "stocks.json")))
+                    ?? throw new InvalidDataException("Film Tools stock data is missing.");
+                options = available with { Films = Sort(available.Films), Papers = Sort(available.Papers) };
+                SetDefaults();
+                SyncSelection();
+            }
+            catch (Exception error)
+            {
+                options = null;
+                controls.IsEnabled = false;
+                Report(error);
+            }
+        }
+
+        private static Stock[] Sort(Stock[] stocks) => stocks.OrderBy(stock => stock.Label, StringComparer.CurrentCulture).ToArray();
+
+        private void SetModeControls()
+        {
+            if (options is null)
+                return;
+
+            var inPrintMode = mode.SelectedItem is Stock { Id: "print" };
+            var currentFilm = (film.SelectedItem as Stock)?.Id;
+            var previousSetting = settingValues;
+            settingValues = true;
+            try
+            {
+                var films = options.Films.Where(stock => !inPrintMode || stock.Kind != "positive").ToArray();
+                film.ItemsSource = films;
+                film.SelectedItem = films.FirstOrDefault(stock => stock.Id == currentFilm) ?? films.FirstOrDefault(stock => stock.Id == DefaultFilm);
+                paper.IsEnabled = printExposure.IsEnabled = printing.IsEnabled = inPrintMode;
+                SetScanOptions();
+            }
+            finally
+            {
+                settingValues = previousSetting;
+            }
+        }
+
+        private void SetScanOptions()
+        {
+            var canInvert = mode.SelectedItem is Stock { Id: "scan" } && film.SelectedItem is Stock { Kind: "negative" };
+            scanInvert.Visibility = canInvert ? Visibility.Visible : Visibility.Collapsed;
+        }
+
+        private void SetDefaults()
+        {
+            if (options is null)
+                return;
+            var previousSetting = settingValues;
+            settingValues = true;
+            try
+            {
+                mode.ItemsSource = options.Modes;
+                mode.SelectedItem = options.Modes.First(stock => stock.Id == "print");
+                paper.ItemsSource = options.Papers;
+                paper.SelectedItem = options.Papers.First(stock => stock.Id == DefaultPaper);
+                spectralMethod.ItemsSource = options.SpectralMethods;
+                spectralMethod.SelectedItem = options.SpectralMethods.First(stock => stock.Id == DefaultSpectralMethod);
+                SetModeControls();
+                film.SelectedItem = options.Films.First(stock => stock.Id == DefaultFilm);
+                scanInvert.IsChecked = false;
+                filmPushPullMode.SelectedIndex = 0;
+                exposure.Value = printExposure.Value = 0;
+                strength.Value = 100;
+                foreach (var (slider, initial) in development.Values)
+                    slider.Value = initial;
+            }
+            finally
+            {
+                settingValues = previousSetting;
+            }
+        }
+
+        private LookSettings? CurrentSettings()
+        {
+            if (mode.SelectedItem is not Stock selectedMode || film.SelectedItem is not Stock selectedFilm
+                || paper.SelectedItem is not Stock selectedPaper || spectralMethod.SelectedItem is not Stock selectedMethod)
+                return null;
+            return new LookSettings(selectedFilm.Id, selectedPaper.Id, exposure.Value,
+                printExposure.Value, strength.Value / 100, selectedMode.Id, selectedMethod.Id,
+                scanInvert.Visibility == Visibility.Visible && scanInvert.IsChecked == true,
+                development.ToDictionary(item => item.Key, item => item.Value.Slider.Value),
+                (filmPushPullMode.SelectedItem as Stock)?.Id ?? "standard");
+        }
+
+        private void RefreshLook()
+        {
+            if (settingValues)
+                return;
+            SaveLook();
+            if (IsSpektraFilmEnabled)
+                opticalPreview.RequestRefresh();
+        }
+
+        private void Run(Action action, string success)
+        {
+            try
+            {
+                action();
+                status.Text = success;
+                StartupHook.Log(success);
+            }
+            catch (Exception error)
+            {
+                Report(error);
+            }
+        }
+
+        private void Report(Exception error)
+        {
+            while (error is TargetInvocationException { InnerException: not null } nested)
+                error = nested.InnerException!;
+            status.Text = error.Message;
+            StartupHook.Log(error.ToString());
+        }
+
+        private static Button Button(string title, Func<Task> action)
+        {
+            var button = new Button { Content = title, Padding = new Thickness(6, 2, 6, 2), Margin = new Thickness(0, 0, 5, 0) };
+            button.Click += async (_, _) => await action();
+            return button;
+        }
+
+    }
+}

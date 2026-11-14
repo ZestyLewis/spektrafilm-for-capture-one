@@ -1,0 +1,13 @@
+/.release-test/
+/build/
+/dist/
+/panel/
+/renderer/
+/.venv/
+**/bin/
+**/obj/
+**/__pycache__/
+*.py[cod]
+*.log
+*.user
+*.cocatalogdb*
