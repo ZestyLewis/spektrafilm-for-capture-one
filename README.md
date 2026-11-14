@@ -4,20 +4,15 @@
 
 An independent Windows tool that brings the spektrafilm film and print simulation into Capture One. Develop your RAW in Capture One, adjust the film look in a docked or floating panel, and export the result as a 16-bit image.
 
-**Supported host: Capture One 16.4.6.2414 on Windows x64.** You'll also need a GPU and driver that support Vulkan. The launcher checks the exact Capture One build because the panel uses internal interfaces. This build works with catalogs (`.cocatalogdb`). Start with a test catalog when trying the integration.
-
-Capture One provides older installers in your account when your license supports them. [Capture One download guide](https://support.captureone.com/hc/en-us/articles/14996282988957-Download-an-Older-Version-of-Capture-One)
+**Experimental branch for other Capture One builds.** The launcher and panel attempt to run on other Windows x64 builds. The panel uses internal Capture One interfaces developed against 16.4.6.2414. Newer builds are untested and may fail to load the panel or expose a different export interface. Testing requires a Vulkan-capable GPU and a disposable copy of a catalog (`.cocatalogdb`). [Stable release for 16.4.6.2414](https://github.com/nothing-complex/spektrafilm-for-capture-one/releases/tag/v0.1.1)
 
 ## Install and open
 
-1. Download **Spektrafilm-for-Capture-One-v0.1.1-windows-x64.zip** from [GitHub Releases](https://github.com/nothing-complex/spektrafilm-for-capture-one/releases/latest) and extract it.
-2. Run **Install Spektrafilm for Capture One.cmd**. It installs under your Windows account and creates the **Spektrafilm for Capture One** desktop shortcut. A fresh install uses `%LOCALAPPDATA%\Programs\Spektrafilm for Capture One`.
-3. Close Capture One. Use the new shortcut and choose the catalog database inside your catalog folder. The launcher backs up the closed database before opening it.
-4. Select a photo and open the **Spektrafilm for Capture One** tab with the film-strip icon. Allow the Viewer to develop the first frame.
+1. Build the experimental branch using the instructions below.
+2. Close Capture One. Run **Start Spektrafilm for Capture One.cmd** from the experimental folder and select a test catalog. The launcher backs up the closed database before opening it.
+3. Select a photo and open the **Spektrafilm for Capture One** tab with the film-strip icon. Allow the Viewer to develop the first frame.
 
-For portable use, run **Start Spektrafilm for Capture One.cmd** from the extracted folder and choose a catalog. Use that launcher or the desktop shortcut when you want to open Capture One with Spektrafilm.
-
-To update, close Capture One and run the new release's installer. The installer updates the existing installation in place, replaces its desktop shortcut, and retains saved looks and the optional LUT environment. To verify the download, use `Get-FileHash -Algorithm SHA256` on the ZIP and compare the result with the `.sha256` file on the release page.
+Run this branch in portable mode alongside an installed stable release. Launch from PowerShell with `-CaptureOnePath` to select a specific Capture One installation.
 
 ## Use the panel
 
@@ -50,10 +45,10 @@ Install 64-bit [Python 3.13](https://www.python.org/downloads/) and run **Setup 
 | Symptom | What to do |
 | --- | --- |
 | The Spektrafilm tab is missing after restart | Close every Capture One window and launch again through **Spektrafilm for Capture One**. Open the catalog selected at launch. |
-| Launcher reports a version mismatch | Select the x64 Capture One 16.4.6.2414 installation. |
+| Experimental panel or export fails | Report the exact Capture One build and share the relevant lines from `%LOCALAPPDATA%\FilmToolsForCaptureOne\panel.log`. |
 | Viewer is slow | Select a smaller Viewer and drag-preview resolution. Lower the grain synthesis sample count if you are using synthesis. |
 | Launcher finds an open or busy catalog | Open it in Capture One normally, close it, and retry. |
-| GPU or startup error | Run `.\Start-Spektrafilm.ps1 -CheckOnly` in PowerShell from the installed folder. It checks the release files, Capture One build and a Vulkan test frame. |
+| GPU or startup error | Run `.\Start-Spektrafilm.ps1 -CheckOnly` in PowerShell from the experimental folder. It checks for the required files and runs a Vulkan test frame. |
 
 Diagnostic logs and up to five database backups per catalog are under `%LOCALAPPDATA%\FilmToolsForCaptureOne`. The database backup covers the catalog database file. Keep your normal catalog and image backups as well.
 
@@ -61,16 +56,15 @@ To uninstall, close Capture One, delete the **Spektrafilm for Capture One** desk
 
 ## Build from source
 
-Building requires Windows x64, Visual Studio 2022 with Desktop development with C++, CMake 3.24 or newer, a Vulkan SDK, the .NET 8 SDK, 64-bit Python 3.13 and a local installation of Capture One 16.4.6.2414. The checked-in upstream snapshots contain the code and tables used in the build. From the repository in PowerShell, point `$python` to your Python 3.13 executable and run:
+Building requires Windows x64, Visual Studio 2022 with Desktop development with C++, CMake 3.24 or newer, a Vulkan SDK, the .NET 8 SDK, 64-bit Python 3.13 and a local Capture One installation for the assembly references. The build was developed against 16.4.6.2414. The checked-in upstream snapshots contain the code and tables used in the build. From the repository in PowerShell, point `$python` to your Python 3.13 executable and run:
 
 ```powershell
 & $python -m pip install -r .\requirements-build.txt
 .\Build-Windows.ps1 -BuildPanel -StageRuntime -PythonPath $python
 .\Start-Spektrafilm.ps1 -CheckOnly
-.\Package-Windows.ps1 -Version 0.1.1
 ```
 
-Use `-VulkanSdkPath` to specify a Vulkan SDK location or `-CaptureOneDirectory` for a custom Capture One installation. The build runs the renderer smoke test by default. Packaging writes the archive and SHA-256 checksum to `dist`. See the [upstream build and changes](UPSTREAM-CHANGES.md) and [third-party notices](THIRD-PARTY.md).
+Use `-VulkanSdkPath` to specify a Vulkan SDK location or `-CaptureOneDirectory` for a custom Capture One installation. The build runs the renderer smoke test by default. See the [upstream build and changes](UPSTREAM-CHANGES.md) and [third-party notices](THIRD-PARTY.md).
 
 ## Support development
 

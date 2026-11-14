@@ -2,7 +2,6 @@ using System;
 using System.IO;
 using System.Linq;
 using System.Reflection;
-using System.Security.Cryptography;
 using System.Windows;
 using System.Windows.Media;
 using P1.C1.Controls.Inspector.WPF;
@@ -16,7 +15,6 @@ internal static class StartupHook
 {
     internal const string ProductName = "Spektrafilm for Capture One";
     internal const string BrandName = "Spektrafilm";
-    private const string SupportedHostHash = "4E17B2AB68CB60CCE18BB92CF0C829A93A62024B15354136FD30A3F9EED2E342";
     private const BindingFlags PublicStatic = BindingFlags.Public | BindingFlags.Static;
     private static readonly string[] CustomTabIds = Enumerable.Range(1, 18)
         .Select(index => $"Custom{index}PaletteTab").ToArray();
@@ -38,14 +36,6 @@ internal static class StartupHook
                 || !string.Equals(Path.GetFileName(exe), "CaptureOne.exe", StringComparison.OrdinalIgnoreCase)
                 || !ApprovedCatalog.HasSelection)
                 return;
-
-            var hostPath = Path.Combine(Path.GetDirectoryName(exe)!, "CaptureOne.dll");
-            using var host = File.OpenRead(hostPath);
-            if (Convert.ToHexString(SHA256.HashData(host)) != SupportedHostHash)
-            {
-                Log($"{ProductName} requires the inspected Windows Capture One 16.4.6.2414 build.");
-                return;
-            }
 
             Log($"{ProductName} startup hook loaded.");
             // Wait for Capture One's own WinForms message loop before accessing its WPF palette.

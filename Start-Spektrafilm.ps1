@@ -8,8 +8,6 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $appName = 'Spektrafilm for Capture One'
-$appVersion = '16.4.6.2414'
-$assemblyHash = '4E17B2AB68CB60CCE18BB92CF0C829A93A62024B15354136FD30A3F9EED2E342'
 $userData = Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'FilmToolsForCaptureOne'
 
 function Get-CaptureOneExecutable {
@@ -33,7 +31,7 @@ function Get-CaptureOneExecutable {
             return (Get-Item -LiteralPath $candidate).FullName
         }
     }
-    if ($CaptureOnePath -or $CheckOnly) { throw "Capture One $appVersion could not be found. Pass -CaptureOnePath with the path to CaptureOne.exe." }
+    if ($CaptureOnePath -or $CheckOnly) { throw 'Capture One could not be found. Pass -CaptureOnePath with the path to CaptureOne.exe.' }
     return Select-ExistingFile 'Locate CaptureOne.exe' 'Capture One executable|CaptureOne.exe'
 }
 
@@ -181,11 +179,8 @@ try {
     if (!$app) { return }
     if ([IO.Path]::GetFileName($app) -ine 'CaptureOne.exe') { throw 'Select CaptureOne.exe from the Capture One installation.' }
     $appDirectory = Split-Path -LiteralPath $app
-    $appAssembly = Join-Path $appDirectory 'CaptureOne.dll'
-    if (!(Test-Path -LiteralPath $appAssembly -PathType Leaf) -or
-        (Get-FileHash -LiteralPath $appAssembly -Algorithm SHA256).Hash -ne $assemblyHash -or
-        (Get-Item -LiteralPath $app).VersionInfo.FileVersion -ne $appVersion) {
-        throw "$appName supports Capture One $appVersion (Windows x64). The selected installation does not match the verified build."
+    if (!(Test-Path -LiteralPath (Join-Path $appDirectory 'CaptureOne.dll') -PathType Leaf)) {
+        throw 'CaptureOne.dll was not found beside CaptureOne.exe. Select a complete Capture One installation.'
     }
 
     $hook = Join-Path $PSScriptRoot 'panel\NativePanel.dll'
@@ -204,7 +199,7 @@ try {
     if (!(Test-Path -LiteralPath $python -PathType Leaf)) { $python = $null }
     if ($CheckOnly) {
         Confirm-VulkanRenderer $renderer
-        Write-Output "Capture One $appVersion matches the supported build. Release files and Vulkan render passed."
+        Write-Output 'Capture One files found. Release files and Vulkan render passed.'
         if ($python) { Write-Output "Optional LUT Python found at $python" }
         else { Write-Output 'Optional LUT Python is not installed.' }
         return
