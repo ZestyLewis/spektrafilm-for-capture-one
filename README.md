@@ -74,7 +74,9 @@ Use `-VulkanSdkPath` to specify a Vulkan SDK location or `-CaptureOneDirectory` 
 
 ## Support development
 
-If this integration is useful to you, you can [leave a tip on Ko-fi](https://ko-fi.com/lukakauzlaric).
+- Capture One integration — [Luka Kauzlaric on Ko-fi](https://ko-fi.com/lukakauzlaric)
+- Original spektrafilm research, simulation, and film profiles — [Andrea Volpato on Buy Me a Coffee](https://buymeacoffee.com/andreavolpato)
+- spektrafilm OFX and Vulkan renderer — [Aedan Diez on Ko-fi](https://ko-fi.com/aedandiez)
 
 ## Credits
 
