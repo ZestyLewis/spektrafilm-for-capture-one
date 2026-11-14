@@ -8,15 +8,16 @@ param(
 $ErrorActionPreference = 'Stop'
 $root = $PSScriptRoot
 $dist = Join-Path $root 'dist'
-$archiveName = "Film-Tools-for-Capture-One-v$Version-windows-x64.zip"
+$archiveName = "Spektrafilm-for-Capture-One-v$Version-windows-x64.zip"
 $archive = Join-Path $dist $archiveName
 $stage = Join-Path $dist ('stage-' + [Guid]::NewGuid().ToString('N'))
-$package = Join-Path $stage 'Film Tools for Capture One'
+$package = Join-Path $stage 'Spektrafilm for Capture One'
 $files = @(
-    'Install Film Tools.cmd', 'Install-FilmTools.ps1', 'Start Film Tools.cmd', 'Start-FilmTools.ps1',
+    'Install Spektrafilm for Capture One.cmd', 'Install-Spektrafilm.ps1',
+    'Start Spektrafilm for Capture One.cmd', 'Start-Spektrafilm.ps1',
     'Setup LUT Export.cmd', 'Setup-LutExport.ps1', 'lut_worker.py', 'requirements-lut.txt',
     'README.md', 'LICENSE', 'THIRD-PARTY.md', 'UPSTREAM-CHANGES.md', 'stocks.json',
-    'assets\FilmTools.ico', 'assets\FilmTools.png', 'panel\NativePanel.dll',
+    'assets\Spektrafilm.ico', 'assets\Spektrafilm.png', 'panel\NativePanel.dll',
     'profiles\preview\Linear Rec.2020.icc', 'profiles\preview\ProPhoto RGB.icc',
     'renderer\SpektraStillRenderer.exe', 'renderer\SpektraHanatos2025Spectra.f32',
     'renderer\SpektraOutputGamutCompression.f32', 'upstream-ofx\LICENSE.txt',
@@ -42,9 +43,9 @@ try {
         [void] [IO.Directory]::CreateDirectory((Split-Path -Parent $destination))
         [IO.File]::Copy($source.FullName, $destination)
     }
-    $sourceUrl = "https://github.com/nothing-complex/film-tools-for-capture-one/tree/v$Version"
+    $sourceUrl = "https://github.com/nothing-complex/spektrafilm-for-capture-one/tree/v$Version"
     @(
-        "Film Tools for Capture One v$Version"
+        "Spektrafilm for Capture One v$Version"
         "Corresponding source and build instructions"
         $sourceUrl
     ) | Set-Content -LiteralPath (Join-Path $package 'SOURCE.txt') -Encoding ascii

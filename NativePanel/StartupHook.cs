@@ -14,7 +14,8 @@ using Forms = System.Windows.Forms;
 
 internal static class StartupHook
 {
-    private const string PanelName = "Film Tools";
+    internal const string ProductName = "Spektrafilm for Capture One";
+    internal const string BrandName = "Spektrafilm";
     private const string SupportedHostHash = "4E17B2AB68CB60CCE18BB92CF0C829A93A62024B15354136FD30A3F9EED2E342";
     private const BindingFlags PublicStatic = BindingFlags.Public | BindingFlags.Static;
     private static readonly string[] CustomTabIds = Enumerable.Range(1, 18)
@@ -42,11 +43,11 @@ internal static class StartupHook
             using var host = File.OpenRead(hostPath);
             if (Convert.ToHexString(SHA256.HashData(host)) != SupportedHostHash)
             {
-                Log("Film Tools requires the inspected Windows Capture One 16.4.6.2414 build.");
+                Log($"{ProductName} requires the inspected Windows Capture One 16.4.6.2414 build.");
                 return;
             }
 
-            Log("Film Tools startup hook loaded.");
+            Log($"{ProductName} startup hook loaded.");
             // Wait for Capture One's own WinForms message loop before accessing its WPF palette.
             Forms.Application.Idle += OnApplicationIdle;
         }
@@ -133,7 +134,7 @@ internal static class StartupHook
         var lastUserTab = palette.Current;
         var names = palette.Tabs.Select(item => item.Name).ToHashSet(StringComparer.Ordinal);
         var id = CustomTabIds.FirstOrDefault(name => !names.Contains(name))
-            ?? throw new InvalidOperationException("Remove an unused custom tool tab to make room for Film Tools.");
+            ?? throw new InvalidOperationException($"Remove an unused custom tool tab to make room for {ProductName}.");
         var newTab = new FilmToolsTab(id, bus.GlobalBus, document)
         {
             IsVisible = true,
@@ -166,7 +167,7 @@ internal static class StartupHook
         previousTab = lastUserTab;
         window = form;
         window.FormClosing += OnFormClosing;
-        LogState($"Attached {PanelName} to the selected catalog as {id}.");
+        LogState($"Attached {ProductName} to the selected catalog as {id}.");
         if (hosted is { } attached)
         {
             try
@@ -176,13 +177,13 @@ internal static class StartupHook
             }
             catch (Exception error)
             {
-                Log("Film Tools could not bind the native Export command: " + error);
+                Log($"{BrandName} could not bind the native Export command: {error}");
             }
         }
     }
 
     private sealed class FilmToolsTab(string id, IMessageBus bus, ICaptureOneDocument document)
-        : InspectorPaletteTabViewModel(id, bus, PanelName, document)
+        : InspectorPaletteTabViewModel(id, bus, ProductName, document)
     {
         private static readonly FilmstripTabInfoFactory FilmstripFactory = new();
 
@@ -262,7 +263,7 @@ internal static class StartupHook
             oldTab.Dispose();
         }
         // The main form saves its palette before raising FormClosing. Refresh the
-        // in-memory workspace snapshot once the temporary Film Tools tab has been removed.
+        // in-memory workspace snapshot once the temporary Spektrafilm tab has been removed.
         if (saveWorkspace && originalWindow is { IsDisposed: false })
             oldOwner.SaveSettingsToWorkspace();
     }

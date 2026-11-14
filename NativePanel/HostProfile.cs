@@ -35,7 +35,7 @@ internal static class HostProfile
             || !ApprovedCatalog.IsApproved(path)
             || SelectionAccess.ActiveDocument.GetValue(manager) is not ICaptureOneDocument document
             || !ReferenceEquals(SelectionAccess.GetMainForm.Invoke(null, new object[] { document }), window))
-            throw new InvalidOperationException("Activate the catalog selected by the Film Tools launcher.");
+            throw new InvalidOperationException("Activate the catalog selected by the Spektrafilm launcher.");
 
         if (((ISelectedCollectionsProvider)document).PrimarySelectedCollection is not ISimpleCollection collection
             || collection.PrimaryVariant is not ICoreVariant variant)

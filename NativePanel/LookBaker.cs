@@ -25,7 +25,7 @@ internal sealed class LookBaker : IDisposable
     internal LookBaker()
     {
         root = Environment.GetEnvironmentVariable("SPEKTRAFILM_ROOT")
-            ?? throw new InvalidOperationException("Start Capture One from the Film Tools launcher.");
+            ?? throw new InvalidOperationException("Start Capture One from the Spektrafilm launcher.");
     }
 
     internal static bool IsAvailable => Environment.GetEnvironmentVariable("SPEKTRAFILM_PYTHON") is { } python && File.Exists(python);
@@ -79,12 +79,12 @@ internal sealed class LookBaker : IDisposable
                     await process.StandardInput.FlushAsync(timeout.Token).ConfigureAwait(false);
                     line = await process.StandardOutput.ReadLineAsync(timeout.Token).ConfigureAwait(false);
                     if (line is null)
-                        throw new IOException("The SpektraFilm renderer exited. Adjust a control to retry.");
+                        throw new IOException("The Spektrafilm renderer exited. Adjust a control to retry.");
                 }
                 catch (OperationCanceledException) when (timeout.IsCancellationRequested)
                 {
                     StopWorker();
-                    throw new TimeoutException("The SpektraFilm renderer timed out. Adjust a control to retry.");
+                    throw new TimeoutException("The Spektrafilm renderer timed out. Adjust a control to retry.");
                 }
                 catch (IOException)
                 {
@@ -99,7 +99,7 @@ internal sealed class LookBaker : IDisposable
             if (result.GetProperty("id").GetInt32() != id)
             {
                 StopWorker();
-                throw new InvalidDataException("The SpektraFilm renderer returned an out-of-order reply.");
+                throw new InvalidDataException("The Spektrafilm renderer returned an out-of-order reply.");
             }
             if (!result.GetProperty("ok").GetBoolean())
                 throw new InvalidOperationException(result.GetProperty("error").GetString());
@@ -142,11 +142,11 @@ internal sealed class LookBaker : IDisposable
             command.Environment["PYTHONNOUSERSITE"] = "1";
             command.Environment["PYTHONUTF8"] = "1";
 
-            var started = Process.Start(command) ?? throw new IOException("Could not start the SpektraFilm renderer.");
+            var started = Process.Start(command) ?? throw new IOException("Could not start the Spektrafilm renderer.");
             started.ErrorDataReceived += (_, eventArgs) =>
             {
                 if (eventArgs.Data is { Length: > 0 } error)
-                    StartupHook.Log("SpektraFilm renderer: " + error);
+                    StartupHook.Log("Spektrafilm renderer: " + error);
             };
             started.BeginErrorReadLine();
             worker = started;

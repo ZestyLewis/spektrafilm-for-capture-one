@@ -7,7 +7,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$appName = 'Film Tools for Capture One'
+$appName = 'Spektrafilm for Capture One'
 $appVersion = '16.4.6.2414'
 $assemblyHash = '4E17B2AB68CB60CCE18BB92CF0C829A93A62024B15354136FD30A3F9EED2E342'
 $userData = Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'FilmToolsForCaptureOne'
@@ -54,17 +54,17 @@ function Select-ExistingFile([string] $title, [string] $filter) {
 
 function Confirm-RequiredFile([string] $path) {
     if (!(Test-Path -LiteralPath $path -PathType Leaf) -or (Get-Item -LiteralPath $path).Length -eq 0) {
-        throw "A release file is missing: $path. Extract the full release ZIP before starting Film Tools."
+        throw "A release file is missing: $path. Extract the full release ZIP before starting $appName."
     }
 }
 
 function Confirm-CatalogIsIdle([string] $path) {
     if (Get-Process -Name CaptureOne -ErrorAction SilentlyContinue) {
-        throw 'Close every Capture One window before starting Film Tools.'
+        throw "Close every Capture One window before starting $appName."
     }
     foreach ($suffix in @('-wal', '-shm', '-journal')) {
         if (Test-Path -LiteralPath "$path$suffix") {
-            throw 'Capture One left catalog transaction files. Open the catalog in Capture One normally, close it, then launch Film Tools again.'
+            throw "Capture One left catalog transaction files. Open the catalog in Capture One normally, close it, then launch $appName again."
         }
     }
 }
@@ -99,7 +99,7 @@ function Save-CatalogBackup([string] $path) {
         try {
             $inputDb = [IO.File]::Open($path, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::None)
         } catch [IO.IOException] {
-            throw "The catalog is busy. Close the program using it before starting Film Tools. $($_.Exception.Message)"
+            throw "The catalog is busy. Close the program using it before starting $appName. $($_.Exception.Message)"
         }
         try {
             Confirm-CatalogIsIdle $path
@@ -176,7 +176,7 @@ function Confirm-VulkanRenderer([string] $renderer) {
 }
 
 try {
-    if (![Environment]::Is64BitOperatingSystem) { throw 'Film Tools requires 64-bit Windows.' }
+    if (![Environment]::Is64BitOperatingSystem) { throw "$appName requires 64-bit Windows." }
     $app = Get-CaptureOneExecutable
     if (!$app) { return }
     if ([IO.Path]::GetFileName($app) -ine 'CaptureOne.exe') { throw 'Select CaptureOne.exe from the Capture One installation.' }
@@ -185,7 +185,7 @@ try {
     if (!(Test-Path -LiteralPath $appAssembly -PathType Leaf) -or
         (Get-FileHash -LiteralPath $appAssembly -Algorithm SHA256).Hash -ne $assemblyHash -or
         (Get-Item -LiteralPath $app).VersionInfo.FileVersion -ne $appVersion) {
-        throw "Film Tools supports Capture One $appVersion (Windows x64). The selected installation does not match the verified build."
+        throw "$appName supports Capture One $appVersion (Windows x64). The selected installation does not match the verified build."
     }
 
     $hook = Join-Path $PSScriptRoot 'panel\NativePanel.dll'
@@ -210,7 +210,7 @@ try {
         return
     }
 
-    if (Get-Process -Name CaptureOne -ErrorAction SilentlyContinue) { throw 'Close every Capture One window before starting Film Tools.' }
+    if (Get-Process -Name CaptureOne -ErrorAction SilentlyContinue) { throw "Close every Capture One window before starting $appName." }
     if (!$CatalogPath) { $CatalogPath = Select-ExistingFile 'Choose an existing Capture One catalog database' 'Capture One catalog database|*.cocatalogdb' }
     if (!$CatalogPath) { return }
     $database = Get-CatalogPath $CatalogPath

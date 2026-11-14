@@ -40,7 +40,7 @@ internal static class NativeGrain
         var original = Applied.TryGetValue(target.Id, out var previous) && previous.Last == current
             ? previous.Original
             : current;
-        SetValues(target, next, current, "SpektraFilm: Capture One Grain");
+        SetValues(target, next, current, "Spektrafilm: Capture One Grain");
         Applied[target.Id] = new(original, ReadValues(target));
     }
 
@@ -57,7 +57,7 @@ internal static class NativeGrain
         if (!Applied.TryGetValue(target.Id, out var previous) || previous.Last != current)
             throw new InvalidOperationException("Capture One Grain changed since the panel applied it.");
 
-        SetValues(target, previous.Original, current, "SpektraFilm: Restore Capture One Grain");
+        SetValues(target, previous.Original, current, "Spektrafilm: Restore Capture One Grain");
         Applied.Remove(target.Id);
     }
 

@@ -56,7 +56,7 @@ internal sealed class OpticalRenderer(bool export = false, bool nativePreview = 
         {
             Stop(abort: true);
             var target = export ? "export" : nativePreview ? "native Viewer preview" : "preview";
-            throw new TimeoutException($"SpektraFilm did not finish the {target} in time.");
+            throw new TimeoutException($"Spektrafilm did not finish the {target} in time.");
         }
         catch (Exception error) when (error is IOException or OperationCanceledException or ObjectDisposedException)
         {
@@ -71,10 +71,10 @@ internal sealed class OpticalRenderer(bool export = false, bool nativePreview = 
             return process;
         Dispose();
         var root = Environment.GetEnvironmentVariable("SPEKTRAFILM_ROOT")
-            ?? throw new InvalidOperationException("Start Capture One using the Film Tools launcher.");
+            ?? throw new InvalidOperationException("Start Capture One using the Spektrafilm launcher.");
         var exe = Path.Combine(root, "renderer", "SpektraStillRenderer.exe");
         if (!File.Exists(exe))
-            throw new IOException("The SpektraFilm Vulkan renderer is missing. See the project README.");
+            throw new IOException("The Spektrafilm Vulkan renderer is missing. See the project README.");
         var start = new ProcessStartInfo(exe)
         {
             WorkingDirectory = Path.GetDirectoryName(exe)!, UseShellExecute = false, CreateNoWindow = true,

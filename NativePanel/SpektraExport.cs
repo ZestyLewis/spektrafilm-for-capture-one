@@ -19,7 +19,7 @@ internal static class SpektraExport
     {
         ".tif" or ".tiff" => PixelFormats.Rgb48,
         ".png" => PixelFormats.Rgba64,
-        _ => throw new InvalidOperationException("Choose 16-bit TIFF or PNG for the SpektraFilm file."),
+        _ => throw new InvalidOperationException("Choose 16-bit TIFF or PNG for the Spektrafilm file."),
     };
 
     internal static void Save(string path, BitmapSource image, CancellationToken stop)
@@ -27,7 +27,7 @@ internal static class SpektraExport
         stop.ThrowIfCancellationRequested();
         var format = PixelFormatFor(path);
         if (image.Format != format)
-            throw new InvalidDataException($"SpektraFilm export requires unpremultiplied {format} pixels.");
+            throw new InvalidDataException($"Spektrafilm export requires unpremultiplied {format} pixels.");
 
         BitmapEncoder encoder = format == PixelFormats.Rgba64
             ? new PngBitmapEncoder()

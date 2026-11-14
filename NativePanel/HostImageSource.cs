@@ -169,7 +169,7 @@ internal static class HostImageSource
         static string ProjectProfilePath(string filename)
         {
             var root = Environment.GetEnvironmentVariable("SPEKTRAFILM_ROOT")
-                ?? throw new InvalidOperationException("Start Capture One using the Film Tools launcher.");
+                ?? throw new InvalidOperationException("Start Capture One using the Spektrafilm launcher.");
             return Path.Combine(root, "profiles", "preview", filename);
         }
     }
@@ -328,7 +328,7 @@ internal static class HostImageSource
             var coreImage = source.CoreImage
                 ?? throw new InvalidOperationException("The selected variant no longer has a source image.");
             if (options.UsesNativeDepth && !coreImage.IsFileAvailable)
-                throw new InvalidOperationException("Connect the original image for the full-resolution SpektraFilm render.");
+                throw new InvalidOperationException("Connect the original image for the full-resolution Spektrafilm render.");
             var image = coreImage.Handle
                 ?? throw new InvalidOperationException("Capture One did not open this source image.");
             IC_Result result;
@@ -369,7 +369,7 @@ internal static class HostImageSource
             IC_ProcessSettings renderSettings, ICPStatusCallback status)
         {
             using var emptyMetadata = new UTF8BytyesSafeHandle(string.Empty);
-            using var processor = new ImageCoreProcessor("SpektraFilm full-resolution development");
+            using var processor = new ImageCoreProcessor("Spektrafilm full-resolution development");
             // Use the primary file's open ImageCore handle with no proxy path.
             var result = processor.SetSource(new SourceSettings(image, string.Empty));
             if (result != IC_Result.resOK)
@@ -419,7 +419,7 @@ internal static class HostImageSource
         var right = native.Left + native.Width;
         var bottom = native.Top + native.Height;
         if (native.Left < -tolerance || native.Top < -tolerance || right > canvas.Width + tolerance || bottom > canvas.Height + tolerance)
-            throw new InvalidOperationException("The selected crop extends outside the image canvas. Move the crop inside the image to export it with SpektraFilm.");
+            throw new InvalidOperationException("The selected crop extends outside the image canvas. Move the crop inside the image to export it with Spektrafilm.");
         return RectangleF.FromLTRB(Math.Max(0, native.Left), Math.Max(0, native.Top),
             Math.Min(canvas.Width, right), Math.Min(canvas.Height, bottom));
     }

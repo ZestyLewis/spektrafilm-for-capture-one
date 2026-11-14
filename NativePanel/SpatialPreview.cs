@@ -228,7 +228,7 @@ internal sealed class SpatialPreview
         var body = new StackPanel();
         body.Children.Add(new TextBlock
         {
-            Text = "Live optical Viewer uses Capture One’s development settings as input to SpektraFilm.",
+            Text = "Live optical Viewer uses Capture One’s development settings as input to Spektrafilm.",
             TextWrapping = TextWrapping.Wrap,
             Margin = new Thickness(0, 3, 0, 1),
         });
@@ -316,7 +316,7 @@ internal sealed class SpatialPreview
         AddChannelSliders(synthesis, "grain-synthesis-radius-scale", "Radius scale", 0.01, 20, (1.2, 1, 2.5), 0.01);
         AddLayerSliders(synthesis, "grain-synthesis-layer-scale", (6, 1, 0.4));
         grain.Children.Add(Section("Grain synthesis", synthesis));
-        body.Children.Add(Section("SpektraFilm grain", grain));
+        body.Children.Add(Section("Spektrafilm grain", grain));
 
         var scanner = new StackPanel();
         AddToggle(scanner, "scanner-enabled", "Enable scanner controls");
@@ -366,7 +366,7 @@ internal sealed class SpatialPreview
         AddToggle(adaptation, "color-output-chroma-compression", "Output chroma compression", true);
         body.Children.Add(Section("Color adaptation", adaptation));
 
-        return Section("SpektraFilm optics", body);
+        return Section("Spektrafilm optics", body);
     }
 
     private Expander MakeDiffusion(string stage, string name)
@@ -559,7 +559,7 @@ internal sealed class SpatialPreview
             return false;
         try
         {
-            var look = getSettings() ?? throw new InvalidOperationException("Wait for the Film Tools controls to finish loading.");
+            var look = getSettings() ?? throw new InvalidOperationException("Wait for the Spektrafilm controls to finish loading.");
             var target = HostProfile.CaptureTarget(window);
             var input = (InputChoice)inputSpace.SelectedItem;
             var encoding = ((Choice)outputSpace.SelectedItem).Id;
@@ -571,10 +571,10 @@ internal sealed class SpatialPreview
 
             var picker = new SaveFileDialog
             {
-                Title = "Save 16-bit Film Tools export (sRGB)",
+                Title = "Save 16-bit Spektrafilm export (sRGB)",
                 Filter = SpektraExport.FileFilter,
                 FilterIndex = extension == ".png" ? 2 : 1,
-                FileName = Path.GetFileNameWithoutExtension(target.SourcePath) + "-FilmTools",
+                FileName = Path.GetFileNameWithoutExtension(target.SourcePath) + "-Spektrafilm",
                 DefaultExt = extension,
                 AddExtension = true,
                 OverwritePrompt = true,
@@ -593,7 +593,7 @@ internal sealed class SpatialPreview
 
             using var work = new CancellationTokenSource();
             exportWork = work;
-            status.Text = "Rendering Film Tools export…";
+            status.Text = "Rendering Spektrafilm export…";
             try
             {
                 var result = await Task.Run(async () =>
@@ -612,8 +612,8 @@ internal sealed class SpatialPreview
                     SpektraExport.Save(path, output, work.Token);
                     return (output.PixelWidth, output.PixelHeight);
                 }, work.Token);
-                status.Text = $"Saved 16-bit Film Tools export · {result.PixelWidth} × {result.PixelHeight}";
-                StartupHook.Log($"SpektraFilm 16-bit export saved at {result.PixelWidth}x{result.PixelHeight}: {path}");
+                status.Text = $"Saved 16-bit Spektrafilm export · {result.PixelWidth} × {result.PixelHeight}";
+                StartupHook.Log($"Spektrafilm 16-bit export saved at {result.PixelWidth}x{result.PixelHeight}: {path}");
                 return true;
             }
             finally
@@ -624,17 +624,17 @@ internal sealed class SpatialPreview
         catch (OperationCanceledException)
         {
             if (enabled)
-                status.Text = "Film Tools export canceled.";
+                status.Text = "Spektrafilm export canceled.";
             return false;
         }
         catch (Exception error)
         {
             status.Text = error.GetBaseException().Message;
-            StartupHook.Log("Film Tools export failed: " + error);
+            StartupHook.Log("Spektrafilm export failed: " + error);
             if (owner is { IsVisible: true })
-                MessageBox.Show(owner, status.Text, "Could not export with Film Tools", MessageBoxButton.OK, MessageBoxImage.Error);
+                MessageBox.Show(owner, status.Text, "Could not export with Spektrafilm", MessageBoxButton.OK, MessageBoxImage.Error);
             else
-                MessageBox.Show(status.Text, "Could not export with Film Tools", MessageBoxButton.OK, MessageBoxImage.Error);
+                MessageBox.Show(status.Text, "Could not export with Spektrafilm", MessageBoxButton.OK, MessageBoxImage.Error);
             return false;
         }
     }
@@ -783,7 +783,7 @@ internal sealed class SpatialPreview
                     }
                     catch (Exception error) when (!job.IsCancellationRequested)
                     {
-                        StartupHook.Log("SpektraFilm initial source: " + error.GetBaseException().Message);
+                        StartupHook.Log("Spektrafilm initial source: " + error.GetBaseException().Message);
                     }
                 }
                 var development = Task.Run(() => nativeSize
@@ -960,7 +960,7 @@ internal sealed class SpatialPreview
         catch (OperationCanceledException) when (!token.IsCancellationRequested && stop.IsCancellationRequested) { }
         catch (Exception error) when (!token.IsCancellationRequested)
         {
-            StartupHook.Log("SpektraFilm initial preview: " + error.GetBaseException().Message);
+            StartupHook.Log("Spektrafilm initial preview: " + error.GetBaseException().Message);
         }
         finally
         {
@@ -1023,7 +1023,7 @@ internal sealed class SpatialPreview
         catch (InvalidOperationException) when (!WantsDragPreview || selectionUnavailable) { }
         catch (Exception error)
         {
-            StartupHook.Log("SpektraFilm drag preview: " + error.GetBaseException().Message);
+            StartupHook.Log("Spektrafilm drag preview: " + error.GetBaseException().Message);
         }
         finally
         {
@@ -1083,7 +1083,7 @@ internal sealed class SpatialPreview
             var picker = new SaveFileDialog
             {
                 Filter = "PNG image|*.png",
-                FileName = "Film Tools preview.png",
+                FileName = "Spektrafilm preview.png",
                 AddExtension = true,
                 DefaultExt = ".png",
             };
@@ -1104,7 +1104,7 @@ internal sealed class SpatialPreview
         }
         catch (Exception error)
         {
-            MessageBox.Show(error.GetBaseException().Message, "Could not save Film Tools preview", MessageBoxButton.OK, MessageBoxImage.Error);
+            MessageBox.Show(error.GetBaseException().Message, "Could not save Spektrafilm preview", MessageBoxButton.OK, MessageBoxImage.Error);
             StartupHook.Log(error.ToString());
         }
         finally

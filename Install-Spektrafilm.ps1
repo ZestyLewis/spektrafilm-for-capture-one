@@ -1,14 +1,24 @@
 [CmdletBinding(SupportsShouldProcess)]
 param(
-    [string] $Destination = (Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'Programs\Film Tools for Capture One'),
+    [string] $Destination,
     [string] $DesktopDirectory = ([Environment]::GetFolderPath('DesktopDirectory'))
 )
 
 $ErrorActionPreference = 'Stop'
-$appName = 'Film Tools for Capture One'
-$shortcutName = 'Capture One with spektrafilm'
+$appName = 'Spektrafilm for Capture One'
 $markerName = '.film-tools-install'
-$markerText = 'Film Tools for Capture One portable installation'
+$markerText = 'Spektrafilm for Capture One portable installation'
+$legacyMarkerText = 'Film Tools for Capture One portable installation'
+$lockedMessage = "Close $appName to update, then run the installer again."
+
+function Test-OwnedInstall([string] $path) {
+    if (!(Test-Path -LiteralPath $path -PathType Container)) { return $false }
+    Confirm-PlainItem (Get-Item -LiteralPath $path -Force)
+    $marker = Join-Path $path $markerName
+    if (!(Test-Path -LiteralPath $marker -PathType Leaf)) { return $false }
+    Confirm-PlainItem (Get-Item -LiteralPath $marker -Force)
+    return [IO.File]::ReadAllText($marker) -cin @($markerText, $legacyMarkerText)
+}
 
 function Test-SamePath([string] $first, [string] $second) {
     return [string]::Equals($first, $second, [StringComparison]::OrdinalIgnoreCase)
@@ -38,7 +48,7 @@ function Confirm-UpdateFilesAvailable([string] $install) {
             $file.Dispose()
         } catch {
             if (Test-FileInUse $_.Exception) {
-                throw 'Close Capture One with Film Tools to update, then run the installer again.'
+                throw $lockedMessage
             }
             throw
         }
@@ -56,8 +66,12 @@ function Remove-TemporaryInstall([string] $path, [string] $parent) {
     Remove-Item -LiteralPath $item.FullName -Recurse -Force
 }
 
-function Save-DesktopShortcut([string] $path, [string] $target, [string] $launcher, [string] $install) {
-    $baseArguments = '-NoLogo -NoProfile -STA -ExecutionPolicy Bypass -File "' + $launcher + '"'
+function Get-ShortcutArguments([string] $launcher) {
+    return '-NoLogo -NoProfile -STA -ExecutionPolicy Bypass -File "' + $launcher + '"'
+}
+
+function Save-DesktopShortcut([string] $path, [string] $target, [string] $launcher, [string] $install, [bool] $upgrade) {
+    $baseArguments = Get-ShortcutArguments $launcher
     $arguments = $baseArguments + ' -Shortcut'
     $shell = New-Object -ComObject WScript.Shell
     try {
@@ -67,7 +81,7 @@ function Save-DesktopShortcut([string] $path, [string] $target, [string] $launch
             try {
                 if (!(Test-SamePath $existing.TargetPath $target) -or
                     ($existing.Arguments -cne $arguments -and $existing.Arguments -cne $baseArguments)) {
-                    throw "A different Desktop shortcut already uses the name $shortcutName. Rename it before running the installer."
+                    throw "A different Desktop shortcut already uses the name $appName. Rename it before running the installer."
                 }
             } finally {
                 [void] [Runtime.InteropServices.Marshal]::FinalReleaseComObject($existing)
@@ -82,8 +96,8 @@ function Save-DesktopShortcut([string] $path, [string] $target, [string] $launch
                 $shortcut.TargetPath = $target
                 $shortcut.Arguments = $arguments
                 $shortcut.WorkingDirectory = $install
-                $shortcut.IconLocation = (Join-Path $install 'assets\FilmTools.ico') + ',0'
-                $shortcut.Description = 'Open a Capture One catalog with Film Tools and the spektrafilm engine'
+                $shortcut.IconLocation = (Join-Path $install 'assets\Spektrafilm.ico') + ',0'
+                $shortcut.Description = "Open a Capture One catalog with $appName"
                 $shortcut.Save()
             } finally {
                 [void] [Runtime.InteropServices.Marshal]::FinalReleaseComObject($shortcut)
@@ -94,6 +108,26 @@ function Save-DesktopShortcut([string] $path, [string] $target, [string] $launch
             if ([IO.File]::Exists($temporaryLink)) { [IO.File]::Delete($temporaryLink) }
             if ([IO.File]::Exists($previousLink)) { [IO.File]::Delete($previousLink) }
         }
+        if ($upgrade) {
+            $legacyArguments = Get-ShortcutArguments (Join-Path $install 'Start-FilmTools.ps1')
+            foreach ($name in @('Film Tools for Capture One.lnk', 'Capture One with spektrafilm.lnk')) {
+                $legacyPath = Join-Path $desktop $name
+                if (!(Test-Path -LiteralPath $legacyPath -PathType Leaf)) { continue }
+                try {
+                    Confirm-PlainItem (Get-Item -LiteralPath $legacyPath -Force)
+                    $legacy = $shell.CreateShortcut($legacyPath)
+                    try {
+                        $owned = (Test-SamePath $legacy.TargetPath $target) -and
+                            ($legacy.Arguments -ceq $legacyArguments -or $legacy.Arguments -ceq ($legacyArguments + ' -Shortcut'))
+                    } finally {
+                        [void] [Runtime.InteropServices.Marshal]::FinalReleaseComObject($legacy)
+                    }
+                    if ($owned) { Remove-Item -LiteralPath $legacyPath }
+                } catch {
+                    Write-Warning "Could not migrate the existing shortcut at $legacyPath."
+                }
+            }
+        }
     } finally {
         [void] [Runtime.InteropServices.Marshal]::FinalReleaseComObject($shell)
     }
@@ -101,6 +135,12 @@ function Save-DesktopShortcut([string] $path, [string] $target, [string] $launch
 
 try {
     $source = (Get-Item -LiteralPath $PSScriptRoot).FullName.TrimEnd('\', '/')
+    if (!$Destination) {
+        $programs = Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'Programs'
+        $Destination = Join-Path $programs $appName
+        $legacyInstall = Join-Path $programs 'Film Tools for Capture One'
+        if (!(Test-Path -LiteralPath $Destination) -and (Test-OwnedInstall $legacyInstall)) { $Destination = $legacyInstall }
+    }
     $install = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($Destination).TrimEnd('\', '/')
     $desktop = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($DesktopDirectory).TrimEnd('\', '/')
     $parent = Split-Path -LiteralPath $install
@@ -111,7 +151,7 @@ try {
     if (!(Test-Path -LiteralPath $desktop -PathType Container)) { throw "The Desktop folder is unavailable: $desktop" }
 
     $required = @(
-        'Start Film Tools.cmd', 'Start-FilmTools.ps1', 'stocks.json', 'panel\NativePanel.dll', 'assets\FilmTools.ico',
+        'Start Spektrafilm for Capture One.cmd', 'Start-Spektrafilm.ps1', 'stocks.json', 'panel\NativePanel.dll', 'assets\Spektrafilm.ico',
         'profiles\preview\Linear Rec.2020.icc', 'profiles\preview\ProPhoto RGB.icc',
         'renderer\SpektraStillRenderer.exe', 'renderer\SpektraHanatos2025Spectra.f32', 'renderer\SpektraOutputGamutCompression.f32'
     )
@@ -119,9 +159,9 @@ try {
         $required += "renderer\shaders\Spektra$shader.comp.spv"
     }
     $optional = @(
-        'Install Film Tools.cmd', 'Install-FilmTools.ps1', 'Setup LUT Export.cmd',
+        'Install Spektrafilm for Capture One.cmd', 'Install-Spektrafilm.ps1', 'Setup LUT Export.cmd',
         'Setup-LutExport.ps1', 'lut_worker.py', 'requirements-lut.txt',
-        'README.md', 'LICENSE', 'SOURCE.txt', 'THIRD-PARTY.md', 'UPSTREAM-CHANGES.md', 'assets\FilmTools.png',
+        'README.md', 'LICENSE', 'SOURCE.txt', 'THIRD-PARTY.md', 'UPSTREAM-CHANGES.md', 'assets\Spektrafilm.png',
         'upstream-ofx\LICENSE.txt', 'upstream-ofx\Legal\THIRD_PARTY_NOTICES.txt',
         'upstream-ofx\Legal\SPEKTRAFILM_OFX_LICENSE.txt', 'upstream-ofx\Legal\SPEKTRAFILM_OFX_LUT_LICENSE.txt'
     )
@@ -149,17 +189,11 @@ try {
     }
 
     $upgrade = Test-Path -LiteralPath $install
-    if ($upgrade) {
-        $previousInstall = Get-Item -LiteralPath $install -Force
-        Confirm-PlainItem $previousInstall
-        $marker = Join-Path $install $markerName
-        if (!$previousInstall.PSIsContainer -or !(Test-Path -LiteralPath $marker -PathType Leaf) -or
-            [IO.File]::ReadAllText($marker) -cne $markerText) {
-            throw "The destination already exists and is not a Film Tools installation: $install"
-        }
+    if ($upgrade -and !(Test-OwnedInstall $install)) {
+        throw "The destination already exists and is not a $appName installation: $install"
     }
-    $shortcutPath = Join-Path $desktop "$shortcutName.lnk"
-    if (!$PSCmdlet.ShouldProcess("$install and $shortcutPath", 'Install Film Tools and create its Desktop shortcut')) { return }
+    $shortcutPath = Join-Path $desktop "$appName.lnk"
+    if (!$PSCmdlet.ShouldProcess("$install and $shortcutPath", "Install $appName and create its Desktop shortcut")) { return }
     if ($upgrade) { Confirm-UpdateFilesAvailable $install }
 
     [void] [IO.Directory]::CreateDirectory($parent)
@@ -183,15 +217,16 @@ try {
                 [IO.Directory]::Move($install, $previous)
             } catch {
                 if (Test-FileInUse $_.Exception) {
-                    throw 'Close Capture One with Film Tools to update, then run the installer again.'
+                    throw $lockedMessage
                 }
                 if (($_.Exception.GetBaseException().HResult -band 0xffff) -eq 5) {
-                    throw 'Could not replace the installation folder. Close Capture One with Film Tools to update. If it is already closed, check that you can write to the installation folder.'
+                    throw "Could not replace the installation folder. Close $appName to update. If it is already closed, check that you can write to the installation folder."
                 }
                 throw
             }
             $movedPrevious = $true
             foreach ($oldItem in Get-ChildItem -LiteralPath $previous -Force) {
+                if ($oldItem.Name -cin @('Install Film Tools.cmd', 'Install-FilmTools.ps1', 'Start Film Tools.cmd', 'Start-FilmTools.ps1')) { continue }
                 if (Test-Path -LiteralPath (Join-Path $stage $oldItem.Name)) { continue }
                 Confirm-PlainItem $oldItem
                 Move-Item -LiteralPath $oldItem.FullName -Destination (Join-Path $stage $oldItem.Name)
@@ -201,7 +236,7 @@ try {
         [IO.Directory]::Move($stage, $install)
         $installed = $true
         $powershell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
-        Save-DesktopShortcut $shortcutPath $powershell (Join-Path $install 'Start-FilmTools.ps1') $install
+        Save-DesktopShortcut $shortcutPath $powershell (Join-Path $install 'Start-Spektrafilm.ps1') $install $upgrade
     } catch {
         $installError = $_
         try {

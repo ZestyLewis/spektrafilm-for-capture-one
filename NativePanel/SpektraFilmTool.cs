@@ -92,7 +92,7 @@ internal static class SpektraFilmTool
         }
         internal Task<bool> ExportAsync(Window? owner) => panel.ExportAsync(useRecipeSize: true, owner);
         internal InspectorToolHeaderViewModel CreateDockedHeader(ILifeCycleRegistrationService registration) =>
-            new InspectorToolHeaderViewModelBuilder("Film Tools", () => Tool.Document, registration)
+            new InspectorToolHeaderViewModelBuilder(StartupHook.ProductName, () => Tool.Document, registration)
                 .DoShowActionMenu(new PanelActionMenu(() => floating is null ? "Float Tool" : "Show Floating Tool", ShowFloating))
                 .Build();
 
@@ -138,7 +138,7 @@ internal static class SpektraFilmTool
                 Holder.Content = null;
                 scroll.Content = panel;
                 window.Show();
-                StartupHook.Log("Film Tools panel is floating.");
+                StartupHook.Log($"{StartupHook.ProductName} panel is floating.");
             }
             catch (Exception error)
             {
@@ -164,7 +164,7 @@ internal static class SpektraFilmTool
             layout.Resources.MergedDictionaries.Add(new SharedResourceDictionary { Source = CaptureOneStyle });
             var window = new DockableWindow
             {
-                Title = "Film Tools",
+                Title = StartupHook.ProductName,
                 Content = layout,
                 Background = DefaultConstants.CaptureOneBrushDarkSeparator,
                 Width = 360,
@@ -176,7 +176,7 @@ internal static class SpektraFilmTool
             var header = new InspectorToolHeader
             {
                 Background = DefaultConstants.CaptureOneBrushHeaderBackground,
-                DataContext = new InspectorToolHeaderViewModel("Film Tools",
+                DataContext = new InspectorToolHeaderViewModel(StartupHook.ProductName,
                     argActionMenuGenerator: new PanelActionMenu(() => "Dock Tool", window.Close)),
             };
             // The Inspector header handles its action-menu input before it reaches this handler.
@@ -203,7 +203,7 @@ internal static class SpektraFilmTool
                 floatingBounds = bounds;
             RestoreDock(window);
             if (!disposed)
-                StartupHook.Log("Film Tools panel is docked.");
+                StartupHook.Log($"{StartupHook.ProductName} panel is docked.");
         }
 
         private void RestoreDock(DockableWindow window)
@@ -259,7 +259,7 @@ internal static class SpektraFilmTool
         private readonly CheckBox scanInvert = new() { Content = "Invert negative scan", Margin = new Thickness(0, 5, 0, 2) };
         private readonly CheckBox enableSpektraFilm = new()
         {
-            Content = "Enable Film Tools",
+            Content = "Enable " + StartupHook.BrandName,
             IsChecked = true,
             Margin = new Thickness(0, 0, 0, 6),
         };
@@ -292,7 +292,7 @@ internal static class SpektraFilmTool
             this.window = window;
             this.document = document;
             selections = (ISelectedCollectionsProvider)document;
-            var catalog = ApprovedCatalog.SelectedDatabase ?? throw new InvalidOperationException("No Film Tools catalog selected.");
+            var catalog = ApprovedCatalog.SelectedDatabase ?? throw new InvalidOperationException("No catalog selected for Spektrafilm.");
             var root = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
                 "FilmToolsForCaptureOne", "Variant looks");
             looks = new VariantLookStore(root, catalog);
@@ -472,7 +472,7 @@ internal static class SpektraFilmTool
             {
                 if (CurrentSettings() is { } settings)
                 {
-                    var picker = new SaveFileDialog { Filter = "Film Tools preset|*.spektra.json", FileName = "Film look.spektra.json" };
+                    var picker = new SaveFileDialog { Filter = "Spektrafilm preset|*.spektra.json", FileName = "Film look.spektra.json" };
                     if (picker.ShowDialog() == true)
                     {
                         var preset = new PanelPreset(settings, opticalPreview.CaptureSettings(), 1);
@@ -485,7 +485,7 @@ internal static class SpektraFilmTool
             section.Children.Add(presets);
 
             var export = new WrapPanel { Margin = new Thickness(0, 5, 0, 0) };
-            export.Children.Add(Button("Export with Film Tools…", () => ExportAsync(useRecipeSize: false)));
+            export.Children.Add(Button("Export with Spektrafilm…", () => ExportAsync(useRecipeSize: false)));
             export.Children.Add(Button("Export 33-point LUT…", () => ExportLutAsync(33)));
             export.Children.Add(Button("Export 65-point LUT…", () => ExportLutAsync(65)));
             section.Children.Add(export);
@@ -503,12 +503,12 @@ internal static class SpektraFilmTool
             var variant = displayedVariant;
             try
             {
-                var picker = new OpenFileDialog { Filter = "Film Tools preset|*.spektra.json", CheckFileExists = true };
+                var picker = new OpenFileDialog { Filter = "Spektrafilm preset|*.spektra.json", CheckFileExists = true };
                 if (picker.ShowDialog() != true)
                     return;
                 var preset = await Task.Run(() => PanelFiles.ReadPreset<PanelPreset>(picker.FileName));
                 if (preset.SchemaVersion is < 0 or > 1)
-                    throw new InvalidDataException("This preset version requires a different SpektraFilm build.");
+                    throw new InvalidDataException("This preset version requires a different Spektrafilm build.");
                 if (preset.Look is not { } settings)
                     throw new InvalidDataException("The preset contains no look settings.");
                 if (!SyncSelection() || displayedVariant != variant)
@@ -591,7 +591,7 @@ internal static class SpektraFilmTool
                 catch (Exception error)
                 {
                     ApplyControls(null, null, true);
-                    status.Text = $"Could not load this image’s Film Tools look. {error.Message}";
+                    status.Text = $"Could not load this image’s Spektrafilm look. {error.Message}";
                     StartupHook.Log(status.Text);
                 }
             }
@@ -618,7 +618,7 @@ internal static class SpektraFilmTool
             }
             catch (Exception error)
             {
-                var message = $"Film Tools could not save your look. {error.Message}";
+                var message = $"Spektrafilm could not save your look. {error.Message}";
                 if (saveError.Visibility != Visibility.Visible || saveError.Text != message)
                     StartupHook.Log(message);
                 saveError.Text = message;
@@ -669,7 +669,7 @@ internal static class SpektraFilmTool
             {
                 if (!LookBaker.IsAvailable)
                     throw new InvalidOperationException("Run Setup LUT Export.cmd to enable optional LUT export.");
-                var picker = new SaveFileDialog { Filter = "3D LUT|*.cube", FileName = $"Film Tools sRGB {resolution}.cube" };
+                var picker = new SaveFileDialog { Filter = "3D LUT|*.cube", FileName = $"Spektrafilm sRGB {resolution}.cube" };
                 if (picker.ShowDialog() != true)
                     return;
                 status.Text = "Baking the sRGB LUT…";
@@ -773,9 +773,9 @@ internal static class SpektraFilmTool
             try
             {
                 var root = Environment.GetEnvironmentVariable("SPEKTRAFILM_ROOT")
-                    ?? throw new InvalidOperationException("Start Capture One from the Film Tools launcher.");
+                    ?? throw new InvalidOperationException("Start Capture One from the Spektrafilm launcher.");
                 var available = System.Text.Json.JsonSerializer.Deserialize<LookOptions>(File.ReadAllText(Path.Combine(root, "stocks.json")))
-                    ?? throw new InvalidDataException("Film Tools stock data is missing.");
+                    ?? throw new InvalidDataException("Spektrafilm stock data is missing.");
                 options = available with { Films = Sort(available.Films), Papers = Sort(available.Papers) };
                 SetDefaults();
                 SyncSelection();

@@ -1,12 +1,12 @@
 # Third-party notices
 
-Film Tools for Capture One is an independent project for a separately installed copy of Capture One. Capture One and the names of the upstream projects identify the software this project uses. The project has no affiliation with Capture One, Andrea Volpato, or Aedan Diez.
+Spektrafilm for Capture One is an independent project for a separately installed copy of Capture One. The title identifies the upstream film emulation engine and the host application. Trademark rights are outside the scope of the code and data licenses below.
 
 ## spektrafilm OFX
 
 The Vulkan renderer is built from Aedan Diez’s public spektrafilm OFX source at commit `86476afc5b077de77e2278e3658d1ba9309892a1`, with the changes recorded in [UPSTREAM-CHANGES.md](UPSTREAM-CHANGES.md). The [OFX source license](upstream-ofx/LICENSE.txt) is GNU GPL version 3. The renderer executable, compiled shaders, and runtime tables in the Windows release are built from the corresponding source and public inputs in this repository. The bundled OFX stock files retain their individual credits and license notices. See the [OFX source](https://github.com/chaert-s/spektrafilm-ofx/tree/86476afc5b077de77e2278e3658d1ba9309892a1) and [upstream third-party notices](upstream-ofx/Legal/THIRD_PARTY_NOTICES.txt).
 
-The upstream [official binary notice](upstream-ofx/Legal/SPEKTRAFILM_OFX_LICENSE.txt) and [OFX-exported LUT license](upstream-ofx/Legal/SPEKTRAFILM_OFX_LUT_LICENSE.txt) are kept for reference. They cover upstream official packages and their exported LUTs. Film Tools builds its own renderer. The package omits the official OFX bundles, their presets, and the licensed SMPTE ST 2065-2 data required by Academy Printer Density.
+The upstream [official binary notice](upstream-ofx/Legal/SPEKTRAFILM_OFX_LICENSE.txt) and [OFX-exported LUT license](upstream-ofx/Legal/SPEKTRAFILM_OFX_LUT_LICENSE.txt) are kept for reference. They cover upstream official packages and their exported LUTs. Spektrafilm for Capture One builds its own renderer. The package omits the official OFX bundles, their presets, and the licensed SMPTE ST 2065-2 data required by Academy Printer Density.
 
 The spectral reconstruction includes Johannes Hanika’s Hanatos 2025 work and an alternate reconstruction based on Mallett and Yuksel’s 2019 paper. The upstream notices link to the original work. [vkdt](https://github.com/hanatos/vkdt) · [Mallett and Yuksel](https://diglib.eg.org/items/bbffa865-e99c-4c1f-bd33-70102dc8af78)
 

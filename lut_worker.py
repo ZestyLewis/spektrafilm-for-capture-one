@@ -340,11 +340,11 @@ class LutRenderer:
             xyz = self.mixed_xyz(film, paper, controls, strength, size)
             rgb = np.clip(colour.XYZ_to_RGB(xyz, "sRGB", illuminant=D50, apply_cctf_encoding=True), 0, 1)
         red_fastest = rgb.reshape(size, size, size, 3).transpose(2, 1, 0, 3).reshape(-1, 3)
-        header = (f'TITLE "SpektraFilm {film} {paper} sRGB"\n'
+        header = (f'TITLE "Spektrafilm for Capture One {film} {paper} sRGB"\n'
                   '# sRGB encoded input and output\n'
                   '# Derived from Andrea Volpato / https://github.com/andreavolpato/spektrafilm\n'
                   '# Profiles and derivatives licensed CC BY-SA 4.0 / https://creativecommons.org/licenses/by-sa/4.0/\n'
-                  '# Modified for Film Tools for Capture One by Luka Kauzlaric\n'
+                  '# Modified for Spektrafilm for Capture One by Luka Kauzlaric\n'
                   f'LUT_3D_SIZE {size}\nDOMAIN_MIN 0.0 0.0 0.0\nDOMAIN_MAX 1.0 1.0 1.0\n')
         with StringIO() as stream:
             stream.write(header)

@@ -48,7 +48,7 @@ try {
     if (!$response.ok -or $response.cube -notmatch '(?m)^LUT_3D_SIZE 33$') {
         throw "The LUT worker did not return a valid test LUT. $($response.error)"
     }
-    Write-Host 'LUT export is ready. Restart Capture One from the Film Tools desktop shortcut.'
+    Write-Host 'LUT export is ready. Restart Capture One from the Spektrafilm for Capture One desktop shortcut.'
 } catch {
     [Console]::Error.WriteLine($_.Exception.Message)
     exit 1

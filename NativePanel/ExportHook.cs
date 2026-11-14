@@ -65,7 +65,7 @@ internal sealed class ExportHook : IDisposable
             normal.Dispose();
             throw;
         }
-        StartupHook.Log("Film Tools bound the selected catalog’s native Export commands.");
+        StartupHook.Log("Spektrafilm bound the selected catalog’s native Export commands.");
     }
 
     internal Window? Dialog => dialog;
@@ -89,7 +89,7 @@ internal sealed class ExportHook : IDisposable
                 return;
             if (!HasSingleSelection(editMultiple))
             {
-                Warn("Select one variant to export with Film Tools.");
+                Warn("Select one variant to export with Spektrafilm.");
                 return;
             }
 
@@ -113,7 +113,7 @@ internal sealed class ExportHook : IDisposable
                 return native();
             if (!HasSingleSelection(editMultiple))
             {
-                Warn("Select one variant to export with Film Tools.");
+                Warn("Select one variant to export with Spektrafilm.");
                 return false;
             }
             if (!CheckRecipe())
@@ -139,7 +139,7 @@ internal sealed class ExportHook : IDisposable
             }
             if (!HasSingleSelection(editMultiple))
             {
-                Warn("Select one variant to export with Film Tools.");
+                Warn("Select one variant to export with Spektrafilm.");
                 return;
             }
             if (!busy && CheckRecipe())
@@ -161,7 +161,7 @@ internal sealed class ExportHook : IDisposable
         var enabled = manager.EnabledDestinations;
         if (enabled.Count == 1 && StringComparer.Ordinal.Equals(enabled[0].Name, manager.SelectedDestination?.Name))
             return true;
-        Warn("Enable and select one Export Recipe to use Film Tools.");
+        Warn("Enable and select one Export Recipe to use Spektrafilm.");
         return false;
     }
 
@@ -172,9 +172,9 @@ internal sealed class ExportHook : IDisposable
         {
             confirmation = ConfirmationBinding.Attach(factory.DialogVM.ExportCommand, native => Confirm(native, editMultiple));
             dialog = factory.ExportDialogWindow;
-            dialog.Title += " – Film Tools";
+            dialog.Title += " – " + StartupHook.ProductName;
             exportWindow.SetValue(window, dialog);
-            StartupHook.Log("Film Tools bound the native Export confirmation button.");
+            StartupHook.Log("Spektrafilm bound the native Export confirmation button.");
             return factory;
         }
         catch
@@ -200,7 +200,7 @@ internal sealed class ExportHook : IDisposable
         var owner = dialog;
         try
         {
-            StartupHook.Log("Native Export routed to the Film Tools renderer.");
+            StartupHook.Log("Native Export routed to the Spektrafilm renderer.");
             if (!await export())
                 return false;
             if (!disposed && owner is { IsVisible: true } && ReferenceEquals(owner, dialog))
@@ -225,15 +225,15 @@ internal sealed class ExportHook : IDisposable
     private void Fail(Exception error)
     {
         StartupHook.Log(error.ToString());
-        Warn($"Film Tools export could not start. {error.GetBaseException().Message}");
+        Warn($"Spektrafilm export could not start. {error.GetBaseException().Message}");
     }
 
     private void Warn(string message)
     {
         if (dialog is { IsVisible: true } owner)
-            System.Windows.MessageBox.Show(owner, message, "Film Tools Export", MessageBoxButton.OK, MessageBoxImage.Warning);
+            System.Windows.MessageBox.Show(owner, message, StartupHook.ProductName, MessageBoxButton.OK, MessageBoxImage.Warning);
         else if (!window.IsDisposed)
-            Forms.MessageBox.Show(window, message, "Film Tools Export", Forms.MessageBoxButtons.OK,
+            Forms.MessageBox.Show(window, message, StartupHook.ProductName, Forms.MessageBoxButtons.OK,
                 Forms.MessageBoxIcon.Warning);
     }
 

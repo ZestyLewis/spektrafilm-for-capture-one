@@ -18,7 +18,7 @@ using PaintEventArgs = P1.C1.Tools.Viewer.WPFViewing.WPFControlWithGDIOnPaint.Pa
 internal sealed class ViewerPreview : IDisposable
 {
     private const BindingFlags Instance = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
-    private const string InactiveDocument = "Activate the selected catalog to resume the Film Tools preview.";
+    private const string InactiveDocument = "Activate the selected catalog to resume the Spektrafilm preview.";
     private const string WaitingForGeometry = "Waiting for a visible image in the main Viewer.";
     private readonly object window;
     private Attachment? attachment;

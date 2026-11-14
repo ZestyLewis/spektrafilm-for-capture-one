@@ -20,7 +20,7 @@ internal sealed class VariantLookStore(string root, string catalogDatabase)
         {
             var saved = PanelFiles.ReadPreset<VariantLook>(GetPath(variant));
             if (saved.Version != 1 || saved.Look is null || saved.Optics is null)
-                throw new InvalidDataException("The saved Film Tools look has an unsupported format.");
+                throw new InvalidDataException("The saved Spektrafilm look has an unsupported format.");
             return saved;
         }
         catch (FileNotFoundException) { return null; }
