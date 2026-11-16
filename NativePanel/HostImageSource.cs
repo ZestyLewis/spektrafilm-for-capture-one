@@ -20,14 +20,6 @@ using P1.C1.ImageCoreWrapper.ImageCore;
 using P1.C1.ViewModels.ProxyProcessing;
 using P1.ModelCoreWrapper;
 
-internal enum PreviewInputSpace
-{
-    Srgb,
-    AdobeRgb,
-    ProPhotoRgb,
-    LinearRec2020,
-}
-
 internal static class HostImageSource
 {
     private const int PixelLimit = 1024 * 1024;

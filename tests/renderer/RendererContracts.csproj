@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType><TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="../../NativePanel/OpticalRenderer.cs" Link="OpticalRenderer.cs" />
+    <Compile Include="../../NativePanel/WorkerEnvironment.cs" Link="WorkerEnvironment.cs" />
+    <Compile Include="../../NativePanel/NativeLutExporter.cs" Link="NativeLutExporter.cs" />
+  </ItemGroup>
+</Project>

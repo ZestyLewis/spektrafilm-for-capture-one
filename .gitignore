@@ -1,4 +1,8 @@
 /.release-test/
+/.test-results/
+/.test-build/
+/build-manifest.json
+/runtime-manifest.required
 /build/
 /dist/
 /panel/

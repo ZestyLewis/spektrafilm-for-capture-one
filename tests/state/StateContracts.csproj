@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="../../NativePanel/PanelFiles.cs" Link="PanelFiles.cs" />
+    <Compile Include="../../NativePanel/VariantLookStore.cs" Link="VariantLookStore.cs" />
+    <Compile Include="../../NativePanel/LookStateValidation.cs" Link="LookStateValidation.cs" />
+    <Compile Include="../../NativePanel/LookSettings.cs" Link="LookSettings.cs" />
+    <Compile Include="../../NativePanel/NativeAdjustmentTransaction.cs" Link="NativeAdjustmentTransaction.cs" />
+  </ItemGroup>
+</Project>

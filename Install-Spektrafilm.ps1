@@ -9,6 +9,7 @@ $appName = 'Spektrafilm for Capture One'
 $markerName = '.film-tools-install'
 $markerText = 'Spektrafilm for Capture One portable installation'
 $legacyMarkerText = 'Film Tools for Capture One portable installation'
+$ownedManifestName = '.film-tools-owned.json'
 $lockedMessage = "Close $appName to update, then run the installer again."
 
 function Test-OwnedInstall([string] $path) {
@@ -64,6 +65,76 @@ function Remove-TemporaryInstall([string] $path, [string] $parent) {
         throw "Could not verify temporary installation path $path."
     }
     Remove-Item -LiteralPath $item.FullName -Recurse -Force
+}
+
+function Read-OwnedFiles([string] $install) {
+    $owned = @{}
+    $path = Join-Path $install $ownedManifestName
+    if (!(Test-Path -LiteralPath $path -PathType Leaf)) { return $owned }
+    Confirm-PlainItem (Get-Item -LiteralPath $path -Force)
+    try {
+        $manifest = [IO.File]::ReadAllText($path) | ConvertFrom-Json
+        if ($manifest.schema -ne 1) { return $owned }
+        foreach ($file in $manifest.files) {
+            if ($file.path -is [string] -and $file.sha256 -match '^[a-fA-F0-9]{64}$') {
+                $owned[$file.path.Replace('/', '\')] = $file.sha256
+            }
+        }
+    } catch {
+        # A missing/corrupt ownership receipt never grants permission to discard a file.
+        Write-Warning 'The previous installation receipt could not be read; changed files will be retained.'
+    }
+    return $owned
+}
+
+function Copy-PlainTree([string] $sourcePath, [string] $destinationPath) {
+    $item = Get-Item -LiteralPath $sourcePath -Force
+    Confirm-PlainItem $item
+    if ($item.PSIsContainer) {
+        [void] [IO.Directory]::CreateDirectory($destinationPath)
+        foreach ($child in Get-ChildItem -LiteralPath $item.FullName -Force) {
+            Copy-PlainTree $child.FullName (Join-Path $destinationPath $child.Name)
+        }
+    } else {
+        [void] [IO.Directory]::CreateDirectory((Split-Path -Parent $destinationPath))
+        [IO.File]::Copy($item.FullName, $destinationPath)
+    }
+}
+
+function Get-PlainFiles([string] $directory) {
+    Confirm-PlainItem (Get-Item -LiteralPath $directory -Force)
+    foreach ($child in Get-ChildItem -LiteralPath $directory -Force) {
+        Confirm-PlainItem $child
+        if ($child.PSIsContainer) { Get-PlainFiles $child.FullName }
+        else { $child }
+    }
+}
+
+function Merge-UserFiles([string] $previousRoot, [string] $stageRoot, [string] $relative, [hashtable] $owned, [string] $recoveryRoot) {
+    $directory = if ($relative) { Join-Path $previousRoot $relative } else { $previousRoot }
+    foreach ($item in Get-ChildItem -LiteralPath $directory -Force) {
+        Confirm-PlainItem $item
+        $name = if ($relative) { Join-Path $relative $item.Name } else { $item.Name }
+        if (!$relative -and $item.Name -in @($markerName, $ownedManifestName)) { continue }
+        $target = Join-Path $stageRoot $name
+        if (!(Test-Path -LiteralPath $target)) {
+            if (!$item.PSIsContainer -and $owned.ContainsKey($name) -and
+                (Get-FileHash -LiteralPath $item.FullName -Algorithm SHA256).Hash -eq $owned[$name]) { continue }
+            Copy-PlainTree $item.FullName $target
+        } elseif ($item.PSIsContainer -and (Get-Item -LiteralPath $target -Force).PSIsContainer) {
+            Merge-UserFiles $previousRoot $stageRoot $name $owned $recoveryRoot
+        } elseif (!$item.PSIsContainer -and (Test-Path -LiteralPath $target -PathType Leaf)) {
+            $oldHash = (Get-FileHash -LiteralPath $item.FullName -Algorithm SHA256).Hash
+            $newHash = (Get-FileHash -LiteralPath $target -Algorithm SHA256).Hash
+            if ($oldHash -eq $newHash) { continue }
+            # Only an unmodified file recorded by the old installer is replaceable.
+            if ($owned.ContainsKey($name) -and $owned[$name] -eq $oldHash) { continue }
+            Copy-PlainTree $item.FullName (Join-Path $recoveryRoot $name)
+        } else {
+            # A file/directory collision can contain arbitrary user data.
+            Copy-PlainTree $item.FullName (Join-Path $recoveryRoot $name)
+        }
+    }
 }
 
 function Get-ShortcutArguments([string] $launcher) {
@@ -135,6 +206,16 @@ function Save-DesktopShortcut([string] $path, [string] $target, [string] $launch
 
 try {
     $source = (Get-Item -LiteralPath $PSScriptRoot).FullName.TrimEnd('\', '/')
+    if ((Test-Path -LiteralPath (Join-Path $source 'runtime-manifest.required')) -and
+        !(Test-Path -LiteralPath (Join-Path $source 'build-manifest.json'))) {
+        throw 'The release contains an incomplete staged runtime. Extract or rebuild the complete release.'
+    }
+    if ((Test-Path -LiteralPath (Join-Path $source 'build-manifest.json')) -or
+        (Test-Path -LiteralPath (Join-Path $source 'package-manifest.json'))) {
+        . (Join-Path $source 'ReleaseManifest.ps1')
+        if (Test-Path -LiteralPath (Join-Path $source 'package-manifest.json')) { $releasePackage = Test-ReleaseManifest $source 'package-manifest.json' }
+        [void](Test-ReleaseManifest $source)
+    }
     if (!$Destination) {
         $programs = Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'Programs'
         $Destination = Join-Path $programs $appName
@@ -160,6 +241,7 @@ try {
     }
     $optional = @(
         'Install Spektrafilm for Capture One.cmd', 'Install-Spektrafilm.ps1', 'Setup LUT Export.cmd',
+        'ReleaseManifest.ps1', 'build-manifest.json', 'package-manifest.json', 'runtime-manifest.required',
         'Setup-LutExport.ps1', 'lut_worker.py', 'requirements-lut.txt',
         'README.md', 'LICENSE', 'SOURCE.txt', 'THIRD-PARTY.md', 'UPSTREAM-CHANGES.md', 'assets\Spektrafilm.png',
         'upstream-ofx\LICENSE.txt', 'upstream-ofx\Legal\THIRD_PARTY_NOTICES.txt',
@@ -181,10 +263,19 @@ try {
         $optionalTree = Join-Path $source $directory
         if (!(Test-Path -LiteralPath $optionalTree -PathType Container)) { continue }
         Confirm-PlainItem (Get-Item -LiteralPath $optionalTree)
-        foreach ($item in Get-ChildItem -LiteralPath $optionalTree -Recurse -File) {
+        foreach ($item in Get-PlainFiles $optionalTree) {
             if ($item.Extension -in '.pyc', '.pyo', '.pyd', '.exe', '.dll' -or $item.FullName -match '[\\/]__pycache__[\\/]') { continue }
             Confirm-PlainItem $item
             $files += $item.FullName.Substring($source.Length + 1)
+        }
+    }
+    if ($releasePackage) {
+        $declared = @{}
+        foreach ($entry in $releasePackage.files) { $declared[$entry.path.Replace('\','/')] = $true }
+        foreach ($relative in $files) {
+            if ($relative -ne 'package-manifest.json' -and !$declared.ContainsKey($relative.Replace('\','/'))) {
+                throw "The package contains an undeclared installation file: $relative"
+            }
         }
     }
 
@@ -203,7 +294,7 @@ try {
     $movedPrevious = $false
     $installed = $false
     $keepStage = $false
-    $movedUserItems = @()
+    $recoveryRelative = Join-Path 'Recovered files' $id
     try {
         [void] [IO.Directory]::CreateDirectory($stage)
         foreach ($relative in $files) {
@@ -212,7 +303,14 @@ try {
             [IO.File]::Copy((Join-Path $source $relative), $target)
         }
         [IO.File]::WriteAllText((Join-Path $stage $markerName), $markerText)
+        $receipt = [ordered]@{ schema = 1; files = @($files | ForEach-Object {
+            [ordered]@{ path = $_.Replace('\', '/'); sha256 = (Get-FileHash -LiteralPath (Join-Path $stage $_) -Algorithm SHA256).Hash.ToLowerInvariant() }
+        }) }
+        [IO.File]::WriteAllText((Join-Path $stage $ownedManifestName), ($receipt | ConvertTo-Json -Depth 5))
         if ($upgrade) {
+            $owned = Read-OwnedFiles $install
+            # Copy user data before moving the original. Any copy failure leaves it intact.
+            Merge-UserFiles $install $stage '' $owned (Join-Path $stage $recoveryRelative)
             try {
                 [IO.Directory]::Move($install, $previous)
             } catch {
@@ -225,13 +323,6 @@ try {
                 throw
             }
             $movedPrevious = $true
-            foreach ($oldItem in Get-ChildItem -LiteralPath $previous -Force) {
-                if ($oldItem.Name -cin @('Install Film Tools.cmd', 'Install-FilmTools.ps1', 'Start Film Tools.cmd', 'Start-FilmTools.ps1')) { continue }
-                if (Test-Path -LiteralPath (Join-Path $stage $oldItem.Name)) { continue }
-                Confirm-PlainItem $oldItem
-                Move-Item -LiteralPath $oldItem.FullName -Destination (Join-Path $stage $oldItem.Name)
-                $movedUserItems += $oldItem.Name
-            }
         }
         [IO.Directory]::Move($stage, $install)
         $installed = $true
@@ -242,9 +333,6 @@ try {
         try {
             if ($installed) { [IO.Directory]::Move($install, $stage) }
             if ($movedPrevious) {
-                foreach ($name in $movedUserItems) {
-                    Move-Item -LiteralPath (Join-Path $stage $name) -Destination (Join-Path $previous $name)
-                }
                 [IO.Directory]::Move($previous, $install)
             }
         } catch {
@@ -261,6 +349,9 @@ try {
     }
     Write-Output "Installed to $install"
     Write-Output "Desktop shortcut created at $shortcutPath"
+    if (Test-Path -LiteralPath (Join-Path $install $recoveryRelative)) {
+        Write-Output "Previously modified or conflicting files retained at $(Join-Path $install $recoveryRelative)"
+    }
 } catch {
     [Console]::Error.WriteLine("${appName}: $($_.Exception.Message)")
     exit 1

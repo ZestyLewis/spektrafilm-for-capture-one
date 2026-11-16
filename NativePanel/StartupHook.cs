@@ -174,9 +174,11 @@ internal static class StartupHook
             {
                 exportHook = new ExportHook(form, () => attached.IsSpektraExportActive,
                     () => attached.ExportAsync(exportHook?.Dialog));
+                attached.SetExportBridgeStatus(null);
             }
             catch (Exception error)
             {
+                attached.SetExportBridgeStatus("Capture One’s Export command could not be connected. It will not include Spektrafilm. Use Export with Spektrafilm in this panel instead. " + error.GetBaseException().Message);
                 Log($"{BrandName} could not bind the native Export command: {error}");
             }
         }

@@ -1,0 +1,288 @@
+using System.Buffers.Binary;
+using System.Diagnostics;
+using System.Text;
+using System.Text.Json;
+
+internal static class StartupHook { internal static void Log(string message) { } }
+
+internal static class Program
+{
+    private const string Contract = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    private static int checks;
+
+    private static async Task Main(string[] args)
+    {
+        if (args.Length == 1 && args[0].EndsWith("stream")) { Worker(); return; }
+        if (args.Length == 2 && args[0] == "--gpu") { await CheckGpu(args[1]); return; }
+        var scratch = Path.Combine(AppContext.BaseDirectory, "fixtures", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(scratch);
+        var previous = Environment.GetEnvironmentVariable("SPEKTRAFILM_ROOT");
+        try
+        {
+            foreach (var malformed in new[] { "status", "length", "truncated", "error-size", "bad-json", "old-version", "bad-json-type", "bad-contract", "bad-precision", "bad-endian" })
+            {
+                var root = Setup(scratch, malformed);
+                using var renderer = new OpticalRenderer(nativePreview: true);
+                await Throws<Exception>(() => renderer.RenderAsync(1, 1, Pixels(1), [], default));
+                File.WriteAllText(Path.Combine(root, "renderer", "scenario.txt"), "valid");
+                var frame = await renderer.RenderAsync(1, 1, Pixels(1), [], default);
+                Check(frame.Length == 16, "fresh frame after " + malformed);
+                var trace = File.ReadAllLines(Path.Combine(root, "renderer", "trace.txt"));
+                Check(trace.Count(l => l.Contains("HELLO")) == 2, "renegotiated " + malformed);
+                Check(trace.Select(l => l.Split(':')[0]).Distinct().Count() == 2, "worker replaced " + malformed);
+            }
+            {
+                var root = Setup(scratch, "valid");
+                using var renderer = new OpticalRenderer(nativePreview: true);
+                var pixels = Pixels(2);
+                await renderer.RenderAsync(2, 1, pixels, [], default);
+                await renderer.RenderAsync(2, 1, pixels, [], default);
+                await renderer.RenderAsync(1, 2, pixels, [], default);
+                var trace = File.ReadAllLines(Path.Combine(root, "renderer", "trace.txt"));
+                Check(trace.Count(l => l.Contains("HELLO")) == 1, "one negotiation per worker");
+                Check(trace.Count(l => l.Contains("FRAME ")) == 2, "layout change replaces input");
+                Check(trace.Count(l => l.EndsWith(":REUSE")) == 1, "immutable frame reused");
+                var diagnostics = await renderer.ReadDiagnosticsAsync(default);
+                Check(diagnostics?.GetProperty("schema").GetInt32() == 1, "versioned diagnostics");
+                Check(renderer.ParameterContract == Contract, "negotiated contract");
+            }
+            {
+                var root = Setup(scratch, "valid-error");
+                using var renderer = new OpticalRenderer(nativePreview: true);
+                await Throws<InvalidOperationException>(() => renderer.RenderAsync(1, 1, Pixels(1), [], default));
+                File.WriteAllText(Path.Combine(root, "renderer", "scenario.txt"), "valid");
+                await renderer.RenderAsync(1, 1, Pixels(1), [], default);
+                var trace = File.ReadAllLines(Path.Combine(root, "renderer", "trace.txt"));
+                Check(trace.Count(l => l.Contains("HELLO")) == 1, "valid error keeps synchronized worker");
+                Check(trace.Count(l => l.Contains("FRAME ")) == 2, "valid error invalidates remembered source");
+            }
+            {
+                var root = Setup(scratch, "hang");
+                using var renderer = new OpticalRenderer(nativePreview: true);
+                using var cancel = new CancellationTokenSource(150);
+                await Throws<OperationCanceledException>(() => renderer.RenderAsync(1, 1, Pixels(1), [], cancel.Token));
+                File.WriteAllText(Path.Combine(root, "renderer", "scenario.txt"), "valid");
+                await renderer.RenderAsync(1, 1, Pixels(1), [], default);
+                Check(File.ReadAllLines(Path.Combine(root, "renderer", "trace.txt")).Count(l => l.Contains("HELLO")) == 2, "cancel restarts and renegotiates");
+            }
+            {
+                var root = Setup(scratch, "delay");
+                using var renderer = new OpticalRenderer(nativePreview: true);
+                var pixels = Pixels(1);
+                var first = renderer.RenderAsync(1, 1, pixels, [], default);
+                using var cancel = new CancellationTokenSource(25);
+                await Throws<OperationCanceledException>(() => renderer.RenderAsync(1, 1, pixels, [], cancel.Token));
+                await first;
+                File.WriteAllText(Path.Combine(root, "renderer", "scenario.txt"), "valid");
+                await Task.WhenAll(Enumerable.Range(0, 5).Select(_ => renderer.RenderAsync(1, 1, pixels, [], default)));
+                Check(File.ReadAllLines(Path.Combine(root, "renderer", "trace.txt")).Count(l => l.Contains("HELLO")) == 1, "queued cancellation/concurrent clients preserve stream");
+            }
+            {
+                var root = Setup(scratch, "valid");
+                using var renderer = new OpticalRenderer();
+                await Throws<ArgumentException>(() => renderer.RenderAsync(1, 1, [], [], default));
+                await Throws<ArgumentException>(() => renderer.RenderAsync(-1, 1, Pixels(1), [], default));
+                await Throws<ArgumentException>(() => renderer.RenderAsync(1, 1, Pixels(1), ["--stock", "bad\nQUIT"], default));
+                await Throws<ArgumentException>(() => renderer.RenderAsync(1, 1, Pixels(1), ["--stock"], default));
+                Check(!File.Exists(Path.Combine(root, "renderer", "trace.txt")), "reject invalid request before launching child");
+            }
+            {
+                var root = Setup(scratch, "valid");
+                var names = new[] { "SPEKTRAFILM_VULKAN_COPY_PASS", "SPEKTRAFILM_VULKAN_GRAIN_PASS", "SPEKTRAFILM_RESOURCE_DIR", "DOTNET_STARTUP_HOOKS" };
+                var old = names.Select(Environment.GetEnvironmentVariable).ToArray();
+                try
+                {
+                    foreach (var name in names) Environment.SetEnvironmentVariable(name, "invalid-test-value");
+                    using var renderer = new OpticalRenderer();
+                    await renderer.RenderAsync(1, 1, Pixels(1), [], default);
+                    Check(!File.ReadAllText(Path.Combine(root, "renderer", "trace.txt")).Contains("ENV_BAD"), "production child environment isolated");
+                    Check(names.All(n => Environment.GetEnvironmentVariable(n) == "invalid-test-value"), "parent environment remains unchanged");
+                }
+                finally { for (var i = 0; i < names.Length; i++) Environment.SetEnvironmentVariable(names[i], old[i]); }
+            }
+            foreach (var manifest in new[] { "[]", "{\"rendererProtocol\":\"1\"}", "{\"rendererProtocol\":1,\"parameterContract\":\"wrong\"}" })
+            {
+                var root = Setup(scratch, "valid");
+                File.WriteAllText(Path.Combine(root, "build-manifest.json"), manifest);
+                using var renderer = new OpticalRenderer();
+                await Throws<InvalidDataException>(() => renderer.RenderAsync(1, 1, Pixels(1), [], default));
+                File.WriteAllText(Path.Combine(root, "build-manifest.json"), JsonSerializer.Serialize(new { rendererProtocol = 1, parameterContract = Contract }));
+                await renderer.RenderAsync(1, 1, Pixels(1), [], default);
+                Check(true, "manifest mismatch recoverable after corrected runtime set");
+            }
+            {
+                Setup(scratch, "valid");
+                var argsForLut = new[] { "--film-exposure", "1.2", "--input-color", "prophoto", "--output-color", "linear_rec709",
+                    "--auto-exposure", "true", "--grain-model", "synthesis", "--halation-amount", "2", "--camera-diffusion-family", "pro_mist",
+                    "--scanner-enabled", "true", "--scanner-glare", "0.1", "--enlarger-scale", "2" };
+                var plan = NativeLutExporter.Prepare(argsForLut);
+                var options = Enumerable.Range(0, plan.Arguments.Length / 2).ToDictionary(i => plan.Arguments[2 * i], i => plan.Arguments[2 * i + 1]);
+                Check(options["--film-exposure"] == "1.2", "LUT retains pointwise creative settings");
+                Check(options["--input-color"] == "srgb" && options["--output-color"] == "srgb", "LUT explicitly uses sRGB domain");
+                Check(options["--grain-model"] == "off" && options["--dir-tail-weight"] == "0" && options["--scanner-glare"] == "0", "LUT disables nonpointwise effects");
+                Check(plan.ExcludedEffects.Contains("automatic exposure") && plan.ExcludedEffects.Contains("scanner glare")
+                    && plan.ExcludedEffects.Contains("film-plane framing"), "LUT reports active exclusions");
+                Check(argsForLut[3] == "prophoto", "LUT does not modify source options");
+                var cube = await NativeLutExporter.ExportAsync(plan, 33, 0, default);
+                Check(cube.Contains("LUT_3D_SIZE 33") && cube.Contains("CC BY-SA 4.0") && cube.Contains("Andrea Volpato") && cube.Contains("Aedan Diez"), "LUT size and credits");
+                var rows = cube.Split('\n').Where(l => l.Length > 0 && (char.IsDigit(l[0]) || l[0] == '-')).ToArray();
+                Check(rows.Length == 33 * 33 * 33 && rows[0] == "0 0 0" && rows[^1] == "1 1 1", "LUT identity ordering/endpoints");
+                Check(rows[1] == "0.03125 0 0" && rows[33] == "0 0.03125 0", "red varies fastest");
+                var nativeCube = await NativeLutExporter.ExportAsync(plan, 33, 1, default);
+                Check(nativeCube.Contains(Contract), "LUT uses negotiated native engine");
+                Check(Math.Abs(NativeLutExporter.Blend(0.2f, 0.8f, 0.5) - 0.5999308) < 0.00001, "LUT blends in linear light");
+                foreach (var invalid in new[] { float.NaN, float.PositiveInfinity, float.NegativeInfinity })
+                {
+                    var samples = NativeLutExporter.BuildGrid(2, default);
+                    BitConverter.GetBytes(invalid).CopyTo(samples, 0);
+                    await Throws<ArgumentException>(() => Task.Run(() => NativeLutExporter.FormatCube(plan, 2, 1,
+                        NativeLutExporter.BuildGrid(2, default), samples, Contract, default)));
+                }
+                await Throws<ArgumentOutOfRangeException>(() => NativeLutExporter.ExportAsync(plan, 129, 1, default));
+                await Throws<ArgumentOutOfRangeException>(() => NativeLutExporter.ExportAsync(plan, 33, double.NaN, default));
+                using var canceled = new CancellationTokenSource(); canceled.Cancel();
+                await Throws<OperationCanceledException>(() => NativeLutExporter.ExportAsync(plan, 65, 1, canceled.Token));
+            }
+            Console.WriteLine($"PASS: {checks} renderer client checks; no GPU or Capture One required.");
+        }
+        finally { Environment.SetEnvironmentVariable("SPEKTRAFILM_ROOT", previous); }
+    }
+
+    private static async Task CheckGpu(string root)
+    {
+        var previousRoot = Environment.GetEnvironmentVariable("SPEKTRAFILM_ROOT");
+        var previousDebug = Environment.GetEnvironmentVariable("SPEKTRAFILM_VULKAN_COPY_PASS");
+        try
+        {
+            Environment.SetEnvironmentVariable("SPEKTRAFILM_ROOT", Path.GetFullPath(root));
+            var source = Pixels(64);
+            var options = new[] { "--film-exposure", "2", "--stock", "kodak_portra_400", "--paper", "kodak_portra_endura" };
+            byte[] clean;
+            using (var renderer = new OpticalRenderer(nativePreview: true))
+            {
+                clean = await renderer.RenderAsync(8, 8, source, options, default);
+                var metrics = await renderer.ReadDiagnosticsAsync(default);
+                Check(metrics?.GetProperty("schema").GetInt32() == 1, "GPU diagnostics protocol");
+                Check(metrics?.GetProperty("renderSequence").GetInt32() == 1, "GPU render counted");
+                await renderer.RenderAsync(8, 8, source, options, default);
+                metrics = await renderer.ReadDiagnosticsAsync(default);
+                Check(metrics?.GetProperty("renderSequence").GetInt32() == 1, "native unchanged request cached");
+            }
+            Environment.SetEnvironmentVariable("SPEKTRAFILM_VULKAN_COPY_PASS", "1");
+            using (var renderer = new OpticalRenderer(nativePreview: true))
+            {
+                var isolated = await renderer.RenderAsync(8, 8, source, options, default);
+                Check(clean.SequenceEqual(isolated), "inherited bypass flag cannot alter production render");
+                Check(!source.SequenceEqual(isolated), "film still changes source");
+            }
+            var plan = NativeLutExporter.Prepare(options);
+            var maximum = 0.0;
+            foreach (var size in new[] { 33, 65 })
+            {
+                var cube = await NativeLutExporter.ExportAsync(plan, size, 1, default);
+                var grid = NativeLutExporter.BuildGrid(size, default);
+                byte[] expected;
+                using (var renderer = new OpticalRenderer(export: true))
+                    expected = await renderer.RenderAsync(size * size, size, grid, plan.Arguments, default);
+                var rows = cube.Split('\n').Where(l => l.Length > 0 && (char.IsDigit(l[0]) || l[0] == '-')).ToArray();
+                Check(rows.Length == size * size * size, "native LUT sample count " + size);
+                for (var i = 0; i < rows.Length; i++)
+                {
+                    var rgb = rows[i].Split(' ').Select(v => double.Parse(v, System.Globalization.CultureInfo.InvariantCulture)).ToArray();
+                    for (var c = 0; c < 3; c++) maximum = Math.Max(maximum, Math.Abs(rgb[c] - Math.Clamp(BitConverter.ToSingle(expected, (i * 4 + c) * 4), 0, 1)));
+                }
+                Check(maximum <= 6e-9, "native LUT exact sampled-image parity " + size);
+            }
+            Console.WriteLine($"PASS: {checks} GPU integration checks, LUT maximum code error {maximum:R}.");
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("SPEKTRAFILM_ROOT", previousRoot);
+            Environment.SetEnvironmentVariable("SPEKTRAFILM_VULKAN_COPY_PASS", previousDebug);
+        }
+    }
+
+    private static string Setup(string scratch, string scenario)
+    {
+        var root = Path.Combine(scratch, Guid.NewGuid().ToString("N"));
+        var worker = Path.Combine(root, "renderer");
+        Directory.CreateDirectory(worker);
+        var exe = Environment.ProcessPath!;
+        File.Copy(exe, Path.Combine(worker, "SpektraStillRenderer.exe"));
+        foreach (var path in Directory.EnumerateFiles(AppContext.BaseDirectory, "RendererContracts.*"))
+            if (Path.GetExtension(path) != ".exe") File.Copy(path, Path.Combine(worker, Path.GetFileName(path)));
+        File.WriteAllText(Path.Combine(worker, "scenario.txt"), scenario);
+        Environment.SetEnvironmentVariable("SPEKTRAFILM_ROOT", root);
+        return root;
+    }
+
+    private static byte[] Pixels(int count)
+    {
+        var bytes = new byte[count * 16];
+        for (var i = 0; i < count * 4; i++) BitConverter.GetBytes(i % 4 == 3 ? 1f : 0.2f).CopyTo(bytes, i * 4);
+        return bytes;
+    }
+    private static void Check(bool value, string name) { if (!value) throw new Exception(name); checks++; }
+    private static async Task Throws<T>(Func<Task> action) where T : Exception
+    {
+        try { await action(); } catch (T) { checks++; return; }
+        throw new Exception("Expected " + typeof(T).Name);
+    }
+
+    private static void Worker()
+    {
+        using var input = Console.OpenStandardInput();
+        using var output = Console.OpenStandardOutput();
+        byte[] pixels = [];
+        while (ReadLine(input) is { } line)
+        {
+            var scenario = File.ReadAllText("scenario.txt");
+            File.AppendAllText("trace.txt", Environment.ProcessId + ":" + line.TrimEnd() + "\n");
+            var tokens = line.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+            if (tokens[0] == "HELLO")
+            {
+                if (Environment.GetEnvironmentVariables().Keys.Cast<string>().Any(n => n.StartsWith("SPEKTRAFILM_", StringComparison.OrdinalIgnoreCase) || n == "DOTNET_STARTUP_HOOKS"))
+                    File.AppendAllText("trace.txt", "ENV_BAD\n");
+                var json = scenario switch
+                {
+                    "bad-json" => "broken-json",
+                    "bad-json-type" => "{\"protocol\":\"1\"}",
+                    _ => JsonSerializer.Serialize(new { protocol = scenario == "old-version" ? 0 : 1, floatChannels = 4,
+                        floatBits = scenario == "bad-precision" ? 16 : 32, littleEndian = scenario != "bad-endian",
+                        parameterContract = scenario == "bad-contract" ? new string('z', 64) : Contract }),
+                };
+                Reply(output, 0, Encoding.UTF8.GetBytes(json)); continue;
+            }
+            if (tokens[0] == "METRICS") { Reply(output, 0, "{\"schema\":1}"u8.ToArray()); continue; }
+            if (tokens[0].StartsWith("FRAME"))
+            {
+                pixels = new byte[int.Parse(tokens[1]) * int.Parse(tokens[2]) * 16];
+                input.ReadExactly(pixels);
+            }
+            if (scenario == "hang") { Thread.Sleep(10000); continue; }
+            if (scenario == "delay") Thread.Sleep(200);
+            if (scenario == "status") Reply(output, 99, pixels);
+            else if (scenario == "length") Reply(output, 0, new byte[pixels.Length + 1]);
+            else if (scenario == "error-size") Reply(output, 1, new byte[65536]);
+            else if (scenario == "truncated") { Reply(output, 0, [], pixels.Length); return; }
+            else if (scenario == "valid-error") Reply(output, 1, "Invalid stock"u8.ToArray());
+            else Reply(output, 0, pixels);
+        }
+    }
+    private static string? ReadLine(Stream input)
+    {
+        var bytes = new List<byte>();
+        for (int n; (n = input.ReadByte()) >= 0;)
+        {
+            if (n == 10) return Encoding.ASCII.GetString(bytes.ToArray());
+            bytes.Add((byte)n);
+        }
+        return null;
+    }
+    private static void Reply(Stream output, int status, byte[] bytes, int? length = null)
+    {
+        var header = new byte[8]; BinaryPrimitives.WriteInt32LittleEndian(header, status);
+        BinaryPrimitives.WriteInt32LittleEndian(header.AsSpan(4), length ?? bytes.Length);
+        output.Write(header); output.Write(bytes); output.Flush();
+    }
+}

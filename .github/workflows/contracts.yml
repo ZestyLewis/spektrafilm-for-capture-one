@@ -1,0 +1,26 @@
+name: Windows contracts
+on:
+  push:
+    branches: [main, 'experimental/**', 'audit/**']
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  contracts:
+    runs-on: windows-2022
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Verify available .NET SDK
+        shell: pwsh
+        run: dotnet --info
+      - name: Run host-independent contracts and installer fixtures
+        shell: pwsh
+        run: ./Test-Windows.ps1
+      - name: Report hardware and host test boundary
+        if: always()
+        shell: pwsh
+        run: |
+          Get-Content .test-results/summary.json -ErrorAction SilentlyContinue
+          'GPU rendering and licensed Capture One integration require a separately reviewed test run.'

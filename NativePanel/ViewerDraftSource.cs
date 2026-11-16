@@ -10,7 +10,8 @@ internal static class ViewerDraftSource
     private const int BytesPerPixel = 4 * sizeof(float);
     private const int RowsPerBlock = 8;
 
-    internal static HostImageSource.Frame Downsample(HostImageSource.Frame frame, int maxLongEdge, CancellationToken token)
+    internal static HostImageSource.Frame Downsample(HostImageSource.Frame frame, int maxLongEdge, CancellationToken token,
+        PreviewInputSpace space = PreviewInputSpace.LinearRec2020)
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maxLongEdge);
         var sourcePixels = (long)frame.Width * frame.Height;
@@ -54,20 +55,27 @@ internal static class ViewerDraftSource
                     for (var x = 0; x < width; x++)
                     {
                         var column = columns[x];
-                        var sum = sourceRow[column.First] * column.FirstWeight;
+                        var sum = Linear(sourceRow[column.First], space) * column.FirstWeight;
                         for (var sourceX = column.First + 1; sourceX < column.Last; sourceX++)
-                            sum += sourceRow[sourceX];
+                            sum += Linear(sourceRow[sourceX], space);
                         if (column.Last != column.First)
-                            sum += sourceRow[column.Last] * column.LastWeight;
+                            sum += Linear(sourceRow[column.Last], space) * column.LastWeight;
                         targetRow[x] += sum * rowWeight;
                     }
                 }
                 for (var x = 0; x < width; x++)
-                    targetRow[x] *= normalizer;
+                {
+                    var value = targetRow[x] * normalizer;
+                    targetRow[x] = new Vector4(ColorTransfer.Encode(value.X, space), ColorTransfer.Encode(value.Y, space),
+                        ColorTransfer.Encode(value.Z, space), value.W);
+                }
             }
         });
         return new HostImageSource.Frame(width, height, Array.Empty<byte>(), draft, frame.BitDepth);
     }
+
+    private static Vector4 Linear(Vector4 value, PreviewInputSpace space) => new(
+        ColorTransfer.Decode(value.X, space), ColorTransfer.Decode(value.Y, space), ColorTransfer.Decode(value.Z, space), value.W);
 
     private static Box[] BuildBoxes(int sourceLength, int destinationLength)
     {

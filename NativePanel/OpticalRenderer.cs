@@ -3,6 +3,7 @@ using System.Buffers.Binary;
 using System.Diagnostics;
 using System.IO;
 using System.Text;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -10,25 +11,73 @@ internal sealed class OpticalRenderer(bool export = false, bool nativePreview = 
 {
     private Process? process;
     private WeakReference<byte[]>? source;
+    private readonly SemaphoreSlim requests = new(1, 1);
+    private readonly CancellationTokenSource lifetime = new();
+    private readonly object sync = new();
+    private bool disposed;
+    private bool negotiated;
+    private int sourceWidth, sourceHeight;
+    internal string? ParameterContract { get; private set; }
 
     internal async Task<byte[]> RenderAsync(int width, int height, byte[] rgba, string[] arguments, CancellationToken stop,
         bool displayPixels = false)
     {
+        ValidateRequest(width, height, rgba, arguments, displayPixels);
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(stop, lifetime.Token);
+        await requests.WaitAsync(linked.Token).ConfigureAwait(false);
+        try
+        {
+            ObjectDisposedException.ThrowIf(disposed, this);
+            return await RenderCoreAsync(width, height, rgba, arguments, linked.Token, displayPixels).ConfigureAwait(false);
+        }
+        finally { requests.Release(); }
+    }
+
+    private void ValidateRequest(int width, int height, byte[] rgba, string[] arguments, bool displayPixels)
+    {
+        ArgumentNullException.ThrowIfNull(rgba);
+        ArgumentNullException.ThrowIfNull(arguments);
         if (displayPixels && !nativePreview)
             throw new InvalidOperationException("Packed display pixels require the native Viewer renderer.");
+        var edge = export ? 8192 : nativePreview ? 16384 : 2048;
+        var pixels = export ? 32_000_000 : nativePreview ? 100_000_000 : 1_048_576;
+        if (width < 1 || height < 1 || width > edge || height > edge || (long)width * height > pixels
+            || (long)width * height * 16 != rgba.LongLength)
+            throw new ArgumentException("The optical source dimensions and float pixel buffer do not match the render limits.");
+        var length = 64;
+        foreach (var argument in arguments)
+        {
+            if (string.IsNullOrEmpty(argument))
+                throw new ArgumentException("Renderer options must be nonempty ASCII tokens.");
+            foreach (var character in argument)
+                if (character <= ' ' || character > '~')
+                    throw new ArgumentException("Renderer options must be ASCII tokens without whitespace.");
+            length = checked(length + argument.Length + 1);
+        }
+        if (arguments.Length % 2 != 0 || length > 16384)
+            throw new ArgumentException("The renderer option list is incomplete or too long.");
+    }
+
+    private async Task<byte[]> RenderCoreAsync(int width, int height, byte[] rgba, string[] arguments,
+        CancellationToken stop, bool displayPixels)
+    {
+        stop.ThrowIfCancellationRequested();
         var renderer = GetProcess();
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(stop);
         deadline.CancelAfter(export || nativePreview ? TimeSpan.FromMinutes(8) : TimeSpan.FromSeconds(20));
         var token = deadline.Token;
         var input = renderer.StandardInput.BaseStream;
         var output = renderer.StandardOutput.BaseStream;
-        var newSource = source is null || !source.TryGetTarget(out var previous) || !ReferenceEquals(previous, rgba);
+        var newSource = sourceWidth != width || sourceHeight != height
+            || source is null || !source.TryGetTarget(out var previous) || !ReferenceEquals(previous, rgba);
         var verb = newSource ? (displayPixels ? "FRAME8" : "FRAME") : (displayPixels ? "REUSE8" : "REUSE");
         var command = newSource ? FormattableString.Invariant($"{verb} {width} {height}") : verb;
         var header = Encoding.ASCII.GetBytes(command + " " + string.Join(' ', arguments) + "\n");
         var reply = new byte[8];
         try
         {
+            if (!negotiated)
+                await NegotiateAsync(renderer, token).ConfigureAwait(false);
             await input.WriteAsync(header, token).ConfigureAwait(false);
             if (newSource)
                 await input.WriteAsync(rgba, token).ConfigureAwait(false);
@@ -36,7 +85,7 @@ internal sealed class OpticalRenderer(bool export = false, bool nativePreview = 
             await output.ReadExactlyAsync(reply, token).ConfigureAwait(false);
             var code = BinaryPrimitives.ReadInt32LittleEndian(reply);
             var size = BinaryPrimitives.ReadInt32LittleEndian(reply.AsSpan(4));
-            if (code == 1 && size is >= 1 and <= 16384)
+            if (code == 1 && size is >= 1 and <= 4096)
             {
                 var error = new byte[size];
                 await output.ReadExactlyAsync(error, token).ConfigureAwait(false);
@@ -49,7 +98,11 @@ internal sealed class OpticalRenderer(bool export = false, bool nativePreview = 
             var pixels = GC.AllocateUninitializedArray<byte>(size);
             await output.ReadExactlyAsync(pixels, token).ConfigureAwait(false);
             if (newSource)
+            {
                 source = new WeakReference<byte[]>(rgba);
+                sourceWidth = width;
+                sourceHeight = height;
+            }
             return pixels;
         }
         catch (OperationCanceledException) when (!stop.IsCancellationRequested)
@@ -58,18 +111,112 @@ internal sealed class OpticalRenderer(bool export = false, bool nativePreview = 
             var target = export ? "export" : nativePreview ? "native Viewer preview" : "preview";
             throw new TimeoutException($"Spektrafilm did not finish the {target} in time.");
         }
-        catch (Exception error) when (error is IOException or OperationCanceledException or ObjectDisposedException)
+        catch (Exception error) when (error is IOException or InvalidDataException or JsonException
+            or OperationCanceledException or ObjectDisposedException)
         {
             Stop(abort: true);
             throw;
         }
     }
 
+    private async Task NegotiateAsync(Process child, CancellationToken token)
+    {
+        await child.StandardInput.BaseStream.WriteAsync("HELLO 1\n"u8.ToArray(), token).ConfigureAwait(false);
+        await child.StandardInput.BaseStream.FlushAsync(token).ConfigureAwait(false);
+        var header = new byte[8];
+        await child.StandardOutput.BaseStream.ReadExactlyAsync(header, token).ConfigureAwait(false);
+        var status = BinaryPrimitives.ReadInt32LittleEndian(header);
+        var length = BinaryPrimitives.ReadInt32LittleEndian(header.AsSpan(4));
+        if (status != 0 || length is < 2 or > 16384)
+            throw new InvalidDataException("The renderer is incompatible with this panel. Reinstall the complete matching release.");
+        var bytes = new byte[length];
+        await child.StandardOutput.BaseStream.ReadExactlyAsync(bytes, token).ConfigureAwait(false);
+        using var document = JsonDocument.Parse(bytes);
+        var value = document.RootElement;
+        if (value.ValueKind != JsonValueKind.Object
+            || !value.TryGetProperty("protocol", out var protocol) || protocol.ValueKind != JsonValueKind.Number || !protocol.TryGetInt32(out var version) || version != 1
+            || !value.TryGetProperty("floatChannels", out var channels) || channels.ValueKind != JsonValueKind.Number || !channels.TryGetInt32(out var count) || count != 4
+            || !value.TryGetProperty("floatBits", out var bits) || bits.ValueKind != JsonValueKind.Number || !bits.TryGetInt32(out var precision) || precision != 32
+            || !value.TryGetProperty("littleEndian", out var byteOrder) || byteOrder.ValueKind != JsonValueKind.True
+            || !value.TryGetProperty("parameterContract", out var contract) || contract.ValueKind != JsonValueKind.String
+            || contract.GetString() is not { Length: 64 } hash || !IsSha256(hash))
+            throw new InvalidDataException("The renderer returned incompatible capabilities. Reinstall the complete matching release.");
+        ParameterContract = hash;
+        ValidateBuildManifest(child, hash);
+        negotiated = true;
+    }
+
+    private static bool IsSha256(string value)
+    {
+        foreach (var character in value)
+            if (!Uri.IsHexDigit(character)) return false;
+        return true;
+    }
+
+    private static void ValidateBuildManifest(Process child, string contract)
+    {
+        var root = Directory.GetParent(child.StartInfo.WorkingDirectory)?.FullName;
+        if (root is null) return;
+        var path = Path.Combine(root, "build-manifest.json");
+        if (!File.Exists(path)) return; // Source-tree and legacy developer layouts may omit the release manifest.
+        using var file = File.OpenRead(path);
+        if (file.Length > 4 * 1024 * 1024)
+            throw new InvalidDataException("The renderer build manifest is invalid.");
+        using var manifest = JsonDocument.Parse(file);
+        var value = manifest.RootElement;
+        if (value.ValueKind != JsonValueKind.Object
+            || !value.TryGetProperty("rendererProtocol", out var protocol) || protocol.ValueKind != JsonValueKind.Number || !protocol.TryGetInt32(out var version) || version != 1
+            || !value.TryGetProperty("parameterContract", out var parameter) || parameter.ValueKind != JsonValueKind.String
+            || !string.Equals(parameter.GetString(), contract, StringComparison.OrdinalIgnoreCase))
+            throw new InvalidDataException("The renderer and release manifest do not match. Reinstall the complete release.");
+    }
+
+    internal async Task<JsonElement?> ReadDiagnosticsAsync(CancellationToken stop)
+    {
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(stop, lifetime.Token);
+        await requests.WaitAsync(linked.Token).ConfigureAwait(false);
+        try
+        {
+            ObjectDisposedException.ThrowIf(disposed, this);
+            if (process is not { HasExited: false } child || !negotiated) return null;
+            using var deadline = CancellationTokenSource.CreateLinkedTokenSource(linked.Token);
+            deadline.CancelAfter(TimeSpan.FromSeconds(5));
+            var token = deadline.Token;
+            try
+            {
+                await child.StandardInput.BaseStream.WriteAsync("METRICS\n"u8.ToArray(), token).ConfigureAwait(false);
+                await child.StandardInput.BaseStream.FlushAsync(token).ConfigureAwait(false);
+                var header = new byte[8];
+                await child.StandardOutput.BaseStream.ReadExactlyAsync(header, token).ConfigureAwait(false);
+                var length = BinaryPrimitives.ReadInt32LittleEndian(header.AsSpan(4));
+                if (BinaryPrimitives.ReadInt32LittleEndian(header) != 0 || length is < 2 or > 65536)
+                    throw new InvalidDataException("The renderer returned invalid diagnostics.");
+                var bytes = new byte[length];
+                await child.StandardOutput.BaseStream.ReadExactlyAsync(bytes, token).ConfigureAwait(false);
+                using var document = JsonDocument.Parse(bytes);
+                if (document.RootElement.ValueKind != JsonValueKind.Object
+                    || !document.RootElement.TryGetProperty("schema", out var schema)
+                    || schema.ValueKind != JsonValueKind.Number || !schema.TryGetInt32(out var version) || version != 1)
+                    throw new InvalidDataException("The renderer returned incompatible diagnostics.");
+                return document.RootElement.Clone();
+            }
+            catch
+            {
+                Stop(abort: true);
+                throw;
+            }
+        }
+        finally { requests.Release(); }
+    }
+
     private Process GetProcess()
     {
+        lock (sync)
+        {
+        ObjectDisposedException.ThrowIf(disposed, this);
         if (process is { HasExited: false })
             return process;
-        Dispose();
+        Stop(abort: true);
         var root = Environment.GetEnvironmentVariable("SPEKTRAFILM_ROOT")
             ?? throw new InvalidOperationException("Start Capture One using the Spektrafilm launcher.");
         var exe = Path.Combine(root, "renderer", "SpektraStillRenderer.exe");
@@ -80,7 +227,7 @@ internal sealed class OpticalRenderer(bool export = false, bool nativePreview = 
             WorkingDirectory = Path.GetDirectoryName(exe)!, UseShellExecute = false, CreateNoWindow = true,
             RedirectStandardInput = true, RedirectStandardOutput = true, RedirectStandardError = true,
         };
-        start.Environment.Remove("DOTNET_STARTUP_HOOKS");
+        WorkerEnvironment.Sanitize(start);
         start.ArgumentList.Add(export ? "--export-stream" : nativePreview ? "--native-preview-stream" : "--stream");
         var child = Process.Start(start) ?? throw new IOException("Could not start the optical renderer.");
         child.ErrorDataReceived += (_, args) =>
@@ -91,21 +238,37 @@ internal sealed class OpticalRenderer(bool export = false, bool nativePreview = 
         child.BeginErrorReadLine();
         process = child;
         return child;
+        }
     }
 
-    public void Dispose() => Stop(abort: false);
+    public void Dispose()
+    {
+        lock (sync)
+        {
+            if (disposed) return;
+            disposed = true;
+            lifetime.Cancel();
+            Stop(abort: false);
+        }
+    }
 
     private void Stop(bool abort)
     {
+        lock (sync)
+        {
         var child = process;
         process = null;
         source = null;
+        sourceWidth = sourceHeight = 0;
+        negotiated = false;
+        ParameterContract = null;
         if (child is null)
             return;
         if (abort)
             CloseWorker(child, abort: true);
         else
             _ = Task.Run(() => CloseWorker(child, abort: false));
+        }
     }
 
     private static void CloseWorker(Process child, bool abort)

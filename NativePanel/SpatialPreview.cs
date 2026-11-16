@@ -17,7 +17,7 @@ using System.Windows.Media.Imaging;
 using System.Windows.Threading;
 using Microsoft.Win32;
 
-internal sealed class SpatialPreview
+internal sealed class SpatialPreview : IDisposable
 {
     private const int TransferSteps = 8192;
     private const int InitialPreviewLongEdge = 1200;
@@ -120,7 +120,11 @@ internal sealed class SpatialPreview
     private string? failedSize;
     private bool frameCurrent;
     private bool saveInProgress;
-    private CancellationTokenSource? exportWork;
+    private ExportOperation? exportWork;
+    private readonly TextBlock exportStatus = new() { TextWrapping = TextWrapping.Wrap };
+    private readonly Button cancelExport = new() { Content = "Cancel export", Visibility = Visibility.Collapsed, HorizontalAlignment = HorizontalAlignment.Left };
+    private bool disposed;
+    private bool renderingFinal;
     private bool selectionUnavailable;
     private string? previewDetail;
 
@@ -141,16 +145,46 @@ internal sealed class SpatialPreview
         AddResolutionControls(liveControls);
         LiveControls = liveControls;
         Element = Build();
+        var preferences = PanelPreferences.Current;
+        loading = true;
+        previewSize.SelectedItem = PreviewSizes.FirstOrDefault(x => x.Id == preferences.ViewerSize) ?? PreviewSizes[0];
+        dragPreviewSize.SelectedItem = DragSizes.FirstOrDefault(x => x.LongEdge == preferences.DragSize) ?? DefaultDragSize;
+        fastSynthesis.IsChecked = preferences.DraftSynthesis;
+        loading = false;
         defaults = CaptureSettings();
-        refresh.Tick += async (_, _) => await RefreshAsync();
-        showSource.Checked += (_, _) => OnSettingsChanged();
-        showSource.Unchecked += (_, _) => OnSettingsChanged();
+        refresh.Tick += OnRefreshTick;
+        showSource.Checked += (_, _) => RequestRefresh();
+        showSource.Unchecked += (_, _) => RequestRefresh();
         savePreview.Click += async (_, _) => await SavePreviewAsync();
+        var exportControls = new StackPanel();
+        exportControls.Children.Add(exportStatus);
+        exportControls.Children.Add(cancelExport);
+        cancelExport.Click += (_, _) => exportWork?.Cancel();
+        ExportControls = exportControls;
     }
 
     internal FrameworkElement Element { get; }
     internal FrameworkElement LiveControls { get; }
+    internal FrameworkElement ExportControls { get; }
     internal event Action? SettingsChanged;
+    private async void OnRefreshTick(object? sender, EventArgs args)
+    {
+        try { await RefreshAsync(); }
+        catch (OperationCanceledException) { }
+        catch (Exception error) { if (!disposed) ClearFrame(error); }
+    }
+
+    public void Dispose()
+    {
+        if (disposed) return;
+        disposed = true;
+        enabled = false;
+        exportWork?.Cancel();
+        ClearPreview();
+        refresh.Tick -= OnRefreshTick;
+        viewer.StatusChanged -= UpdateViewerStatus;
+        viewer.Dispose();
+    }
     internal bool CompareSource { get => showSource.IsChecked == true; set => showSource.IsChecked = value; }
     private int DragLongEdge => ((DragSize)dragPreviewSize.SelectedItem).LongEdge;
 
@@ -168,12 +202,8 @@ internal sealed class SpatialPreview
             selections.Add(key, ((Choice)chooser.SelectedItem).Id);
         selections.Add("input-color", ((InputChoice)inputSpace.SelectedItem).Id);
         selections.Add("output-color", ((Choice)outputSpace.SelectedItem).Id);
-        selections.Add("preview-size", ((Choice)previewSize.SelectedItem).Id);
-        selections.Add("drag-preview-size", DragLongEdge.ToString(CultureInfo.InvariantCulture));
         foreach (var (key, item) in toggles)
             switches.Add(key, item.IsChecked == true);
-        switches.Add("draft-synthesis", fastSynthesis.IsChecked == true);
-        switches.Add("show-source", CompareSource);
         return new Settings(numbers, selections, switches);
     }
 
@@ -189,6 +219,30 @@ internal sealed class SpatialPreview
             loading = false;
         }
         RequestRefresh();
+    }
+
+    internal void ValidateSettings(Settings settings)
+    {
+        foreach (var (key, value) in settings.Numbers)
+            if (!values.TryGetValue(key, out var slider) || !double.IsFinite(value)
+                || value < slider.Minimum || value > slider.Maximum)
+                throw new InvalidDataException($"Unsupported saved optical value: {key}.");
+        foreach (var (key, value) in settings.Selections)
+        {
+            var valid = key switch
+            {
+                "input-color" => InputSpaces.Any(x => x.Id == value),
+                "output-color" => OutputSpaces.Any(x => x.Id == value),
+                // Accept older looks without making hardware preferences part of a look again.
+                "preview-size" => PreviewSizes.Any(x => x.Id == value),
+                "drag-preview-size" => DragSizes.Any(x => x.LongEdge.ToString(CultureInfo.InvariantCulture) == value),
+                _ => choices.TryGetValue(key, out var chooser) && ((Choice[])chooser.ItemsSource).Any(x => x.Id == value),
+            };
+            if (!valid) throw new InvalidDataException($"Unsupported saved optical choice: {key}={value}.");
+        }
+        foreach (var key in settings.Switches.Keys)
+            if (!toggles.ContainsKey(key) && key is not ("show-source" or "draft-synthesis" or "quick-drag-preview"))
+                throw new InvalidDataException($"Unsupported saved optical switch: {key}.");
     }
 
     private void LoadControlValues(Settings settings)
@@ -210,17 +264,10 @@ internal sealed class SpatialPreview
         var colorId = settings.Selections?.GetValueOrDefault("input-color");
         inputSpace.SelectedItem = InputSpaces.FirstOrDefault(space => space.Id == colorId) ?? InputSpaces[0];
         outputSpace.SelectedItem = OutputSpaces.FirstOrDefault(item => item.Id == settings.Selections?.GetValueOrDefault("output-color")) ?? OutputSpaces[0];
-        previewSize.SelectedItem = PreviewSizes.FirstOrDefault(item => item.Id == settings.Selections?.GetValueOrDefault("preview-size")) ?? PreviewSizes[0];
-        var dragEdge = settings.Selections?.GetValueOrDefault("drag-preview-size");
-        var dragSize = int.TryParse(dragEdge, NumberStyles.None, CultureInfo.InvariantCulture, out var longEdge)
-            ? DragSizes.FirstOrDefault(size => size.LongEdge == longEdge)
-            : null;
-        dragPreviewSize.SelectedItem = dragSize
-            ?? (settings.Switches?.GetValueOrDefault("quick-drag-preview", true) == false ? DragSizes[0] : DefaultDragSize);
         foreach (var (key, item) in toggles)
             item.IsChecked = settings.Switches is { } switches && switches.TryGetValue(key, out var saved) ? saved : defaults.Switches[key];
-        fastSynthesis.IsChecked = settings.Switches?.GetValueOrDefault("draft-synthesis") == true;
-        CompareSource = settings.Switches?.GetValueOrDefault("show-source") == true;
+        // Compare and hardware quality settings are UI preferences, not part of a look.
+        CompareSource = false;
     }
 
     private FrameworkElement Build()
@@ -297,8 +344,8 @@ internal sealed class SpatialPreview
         AddLayerSliders(particle, "grain-layer-scale", (6, 1, 0.4));
         grain.Children.Add(Section("Particle grain", particle));
         var synthesis = new StackPanel();
-        fastSynthesis.Checked += (_, _) => OnSettingsChanged();
-        fastSynthesis.Unchecked += (_, _) => OnSettingsChanged();
+        fastSynthesis.Checked += (_, _) => OnPreferencesChanged();
+        fastSynthesis.Unchecked += (_, _) => OnPreferencesChanged();
         synthesis.Children.Add(fastSynthesis);
         AddToggle(synthesis, "grain-synthesis-layered", "Layered grain", true);
         AddSlider(synthesis, "grain-synthesis-size", "Size", 0.25, 4, 1, 0.05);
@@ -466,13 +513,13 @@ internal sealed class SpatialPreview
         resolutions.ColumnDefinitions.Add(new ColumnDefinition());
         AddRow(0, "Viewer resolution", previewSize);
         AddRow(1, "Drag preview resolution", dragPreviewSize);
-        previewSize.SelectionChanged += (_, _) => OnSettingsChanged();
+        previewSize.SelectionChanged += (_, _) => OnPreferencesChanged();
         dragPreviewSize.SelectionChanged += (_, _) =>
         {
             if (DragLongEdge == 0)
                 EndSliderDrag();
             ResetDraft(keepRenderer: DragLongEdge > 0);
-            OnSettingsChanged();
+            OnPreferencesChanged();
         };
         panel.Children.Add(resolutions);
 
@@ -491,6 +538,14 @@ internal sealed class SpatialPreview
         }
     }
 
+    private void OnPreferencesChanged()
+    {
+        if (loading) return;
+        PanelPreferences.Update(p => p with { ViewerSize = ((Choice)previewSize.SelectedItem).Id,
+            DragSize = DragLongEdge, DraftSynthesis = fastSynthesis.IsChecked == true });
+        RequestRefresh();
+    }
+
     private void OnSettingsChanged()
     {
         if (loading)
@@ -501,7 +556,7 @@ internal sealed class SpatialPreview
 
     internal void RequestRefresh()
     {
-        if (loading || !enabled)
+        if (loading || !enabled || disposed)
             return;
         if (dragging)
             lastDragChange = Environment.TickCount64;
@@ -510,6 +565,8 @@ internal sealed class SpatialPreview
         selectionUnavailable = false;
         savePreview.IsEnabled = false;
         inputRevision++;
+        if (renderingFinal && !dragging)
+            pending?.Cancel();
         refresh.Start();
     }
 
@@ -523,6 +580,7 @@ internal sealed class SpatialPreview
 
     internal void BeginSliderDrag()
     {
+        if (renderingFinal) pending?.Cancel();
         dragging = true;
         lastDragChange = 0;
     }
@@ -541,6 +599,7 @@ internal sealed class SpatialPreview
 
     internal void SetEnabled(bool value)
     {
+        if (disposed) return;
         enabled = value;
         if (enabled)
         {
@@ -548,7 +607,6 @@ internal sealed class SpatialPreview
         }
         else
         {
-            exportWork?.Cancel();
             ClearPreview();
         }
     }
@@ -591,9 +649,12 @@ internal sealed class SpatialPreview
             var path = ProtectOriginal(picker.FileName, target.SourcePath);
             var outputFormat = SpektraExport.PixelFormatFor(path);
 
-            using var work = new CancellationTokenSource();
+            using var work = new ExportOperation(target.VariantId);
             exportWork = work;
-            status.Text = "Rendering Spektrafilm export…";
+            pending?.Cancel();
+            pendingDraft?.Cancel();
+            cancelExport.Visibility = Visibility.Visible;
+            exportStatus.Text = "Rendering Spektrafilm export…";
             try
             {
                 var result = await Task.Run(async () =>
@@ -609,32 +670,33 @@ internal sealed class SpatialPreview
                         : null;
                     work.Token.ThrowIfCancellationRequested();
                     var output = DecodeExport(source, pixels, look.Strength, input.Space, encoding, outputFormat, rendered.Crop, work.Token);
-                    SpektraExport.Save(path, output, work.Token);
+                    SpektraExport.Save(path, output, work.Token, target.SourcePath);
                     return (output.PixelWidth, output.PixelHeight);
                 }, work.Token);
-                status.Text = $"Saved 16-bit Spektrafilm export · {result.PixelWidth} × {result.PixelHeight}";
+                exportStatus.Text = $"Saved 16-bit Spektrafilm export · {result.PixelWidth} × {result.PixelHeight}";
                 StartupHook.Log($"Spektrafilm 16-bit export saved at {result.PixelWidth}x{result.PixelHeight}: {path}");
                 return true;
             }
             finally
             {
                 exportWork = null;
+                cancelExport.Visibility = Visibility.Collapsed;
+                RequestRefresh();
             }
         }
         catch (OperationCanceledException)
         {
-            if (enabled)
-                status.Text = "Spektrafilm export canceled.";
+            exportStatus.Text = "Spektrafilm export canceled.";
             return false;
         }
         catch (Exception error)
         {
-            status.Text = error.GetBaseException().Message;
+            exportStatus.Text = error.GetBaseException().Message;
             StartupHook.Log("Spektrafilm export failed: " + error);
             if (owner is { IsVisible: true })
-                MessageBox.Show(owner, status.Text, "Could not export with Spektrafilm", MessageBoxButton.OK, MessageBoxImage.Error);
+                MessageBox.Show(owner, exportStatus.Text, "Could not export with Spektrafilm", MessageBoxButton.OK, MessageBoxImage.Error);
             else
-                MessageBox.Show(status.Text, "Could not export with Spektrafilm", MessageBoxButton.OK, MessageBoxImage.Error);
+                MessageBox.Show(exportStatus.Text, "Could not export with Spektrafilm", MessageBoxButton.OK, MessageBoxImage.Error);
             return false;
         }
     }
@@ -729,7 +791,8 @@ internal sealed class SpatialPreview
         var size = ((Choice)previewSize.SelectedItem).Id;
         var nativeSize = size == "native";
         var longEdge = nativeSize ? 0 : int.Parse(size, CultureInfo.InvariantCulture);
-        var highDepthPreview = nativeSize || longEdge > InitialPreviewLongEdge;
+        // Resolution is a sampling choice, never a silent bit-depth/source change.
+        const bool highDepthPreview = true;
         var dragEdge = DragLongEdge;
         var needsSource = source is null || sourceRevision != revision || sourceSpace != space || sourceSize != size;
         if (highDepthPreview && !needsSource && WantsDragPreview
@@ -775,11 +838,13 @@ internal sealed class SpatialPreview
                 var snapshot = HostImageSource.Capture(window, target, space);
                 var initialStarted = Stopwatch.GetTimestamp();
                 HostImageSource.Frame? initial = null;
-                if (highDepthPreview && newSelection && dragEdge > 0 && pendingDraft is null && strength > 0)
+                if ((nativeSize || longEdge > InitialPreviewLongEdge) && newSelection && dragEdge > 0 && pendingDraft is null && strength > 0)
                 {
                     try
                     {
-                        initial = await Task.Run(() => snapshot.RenderDraft(Math.Min(dragEdge, InitialPreviewLongEdge), job.Token), job.Token);
+                        using var brief = CancellationTokenSource.CreateLinkedTokenSource(job.Token);
+                        brief.CancelAfter(TimeSpan.FromSeconds(2));
+                        initial = await Task.Run(() => snapshot.RenderDraft(Math.Min(dragEdge, InitialPreviewLongEdge), brief.Token), brief.Token);
                     }
                     catch (Exception error) when (!job.IsCancellationRequested)
                     {
@@ -788,15 +853,11 @@ internal sealed class SpatialPreview
                 }
                 var development = Task.Run(() => nativeSize
                     ? snapshot.RenderNativePreview(job.Token)
-                    : highDepthPreview ? snapshot.RenderScaledPreview(longEdge, job.Token)
-                    : snapshot.Render(longEdge, job.Token), job.Token);
-                if (initial is not null)
-                {
-                    var firstPreview = TryShowInitialPreviewAsync(initial, initialStarted, snapshot.AdjustmentKey,
-                        selectedVariant, selectedSpace, encoding, look, dragEdge, settingsVersion, job.Token);
-                    await Task.WhenAll(development, firstPreview);
-                }
-                var developed = await development;
+                    : snapshot.RenderScaledPreview(longEdge, job.Token), job.Token);
+                var developed = initial is not null
+                    ? await RenderCoordination.PreferFinalAsync(development, token => TryShowInitialPreviewAsync(initial,
+                        initialStarted, snapshot.AdjustmentKey, selectedVariant, selectedSpace, encoding, look, dragEdge, settingsVersion, token), job.Token)
+                    : await development;
                 job.Token.ThrowIfCancellationRequested();
                 if (HostImageSource.GetRevision(window, selectedVariant) != snapshot.AdjustmentKey)
                 {
@@ -851,7 +912,10 @@ internal sealed class SpatialPreview
                             renderer = new OpticalRenderer(nativePreview: highDepthPreview);
                             rendererUsesHighDepthPreview = highDepthPreview;
                         }
-                        var reply = await renderer.RenderAsync(input.Width, input.Height, input.FloatBytes, args, job.Token, displayPixels);
+                        renderingFinal = true;
+                        byte[] reply;
+                        try { reply = await renderer.RenderAsync(input.Width, input.Height, input.FloatBytes, args, job.Token, displayPixels); }
+                        finally { renderingFinal = false; }
                         job.Token.ThrowIfCancellationRequested();
                         if (displayPixels)
                             packed = reply;
@@ -984,7 +1048,7 @@ internal sealed class SpatialPreview
         {
             if (draftSource is null)
             {
-                var reduced = await Task.Run(() => ViewerDraftSource.Downsample(input, dragEdge, job.Token), job.Token);
+                var reduced = await Task.Run(() => ViewerDraftSource.Downsample(input, dragEdge, job.Token, inputColor.Space), job.Token);
                 job.Token.ThrowIfCancellationRequested();
                 draftSource = reduced;
             }
@@ -1099,7 +1163,7 @@ internal sealed class SpatialPreview
                 encoder.Frames.Add(BitmapFrame.Create(frame, null, null,
                     new ReadOnlyCollection<ColorContext>(new[] { new ColorContext(PixelFormats.Bgra32) })));
                 encoder.Save(stream);
-            }));
+            }, beforeCommit: () => OutputPathGuard.Validate(path, target.SourcePath)));
             StartupHook.Log("Saved the sRGB Viewer preview as PNG.");
         }
         catch (Exception error)
@@ -1114,13 +1178,7 @@ internal sealed class SpatialPreview
         }
     }
 
-    private static string ProtectOriginal(string destination, string source)
-    {
-        var path = Path.GetFullPath(destination);
-        if (string.Equals(path, Path.GetFullPath(source), StringComparison.OrdinalIgnoreCase))
-            throw new IOException("Choose a new file to protect the original image.");
-        return path;
-    }
+    private static string ProtectOriginal(string destination, string source) => OutputPathGuard.Validate(destination, source);
 
     private static string DescribeRender(string[] arguments)
     {
@@ -1136,7 +1194,7 @@ internal sealed class SpatialPreview
         return string.Join(' ', settings);
     }
 
-    private string[] RendererOptions(LookSettings look, string inputColor, string outputColor, bool export = false, bool draft = false)
+    internal string[] RendererOptions(LookSettings look, string inputColor, string outputColor, bool export = false, bool draft = false)
     {
         if (look.Mode is "process_negative" or "process_negatives")
             throw new InvalidOperationException("Process Negative requires an encoded negative scan as input.");

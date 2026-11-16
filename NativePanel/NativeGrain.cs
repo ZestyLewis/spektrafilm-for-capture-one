@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Reflection;
+using System.Runtime.ExceptionServices;
 
 internal static class NativeGrain
 {
@@ -40,8 +41,7 @@ internal static class NativeGrain
         var original = Applied.TryGetValue(target.Id, out var previous) && previous.Last == current
             ? previous.Original
             : current;
-        SetValues(target, next, current, "Spektrafilm: Capture One Grain");
-        Applied[target.Id] = new(original, ReadValues(target));
+        ChangeWithReceipt(target, original, () => SetValues(target, next, current, "Spektrafilm: Capture One Grain"));
     }
 
     internal static bool HasApplied(object window, Guid expectedVariantId)
@@ -57,8 +57,28 @@ internal static class NativeGrain
         if (!Applied.TryGetValue(target.Id, out var previous) || previous.Last != current)
             throw new InvalidOperationException("Capture One Grain changed since the panel applied it.");
 
-        SetValues(target, previous.Original, current, "Spektrafilm: Restore Capture One Grain");
-        Applied.Remove(target.Id);
+        ChangeWithReceipt(target, previous.Original,
+            () => SetValues(target, previous.Original, current, "Spektrafilm: Restore Capture One Grain"));
+    }
+
+    private static void ChangeWithReceipt((object Variant, Type Type, Guid Id) target, GrainSettings original, Action change)
+    {
+        Exception? failure = null;
+        try { change(); }
+        catch (Exception error) { failure = error; }
+        try
+        {
+            var actual = ReadValues(target);
+            if (actual == original) Applied.Remove(target.Id);
+            else Applied[target.Id] = new(original, actual);
+        }
+        catch (Exception verificationError)
+        {
+            Applied.Remove(target.Id); // An unverified receipt must never overwrite a user's later edit.
+            failure = failure is null ? verificationError : new AggregateException(
+                "Capture One Grain could not be changed safely and its resulting values could not be verified.", failure, verificationError);
+        }
+        if (failure is not null) ExceptionDispatchInfo.Capture(failure).Throw();
     }
 
     private static (object Variant, Type Type, Guid Id) SelectedTarget(object window, Guid expectedVariantId)
@@ -85,20 +105,25 @@ internal static class NativeGrain
         var grainType = Property(target.Type, "FilmGrainType");
         var amount = Property(target.Type, "FilmGrainAmount");
         var granularity = Property(target.Type, "FilmGrainGranularity");
+        if (!grainType.CanRead || !grainType.CanWrite || !grainType.PropertyType.IsEnum
+            || !amount.CanRead || !amount.CanWrite || amount.PropertyType != typeof(float)
+            || !granularity.CanRead || !granularity.CanWrite || granularity.PropertyType != typeof(float))
+            throw new InvalidOperationException("This Capture One version exposes incompatible grain controls.");
+        var steps = new List<NativeAdjustmentTransaction.Step>();
+        if (values.Type != current.Type)
+            steps.Add(new("grain type",
+                () => grainType.SetValue(target.Variant, Enum.ToObject(grainType.PropertyType, values.Type)),
+                () => grainType.SetValue(target.Variant, Enum.ToObject(grainType.PropertyType, current.Type))));
+        if (values.Granularity != current.Granularity)
+            steps.Add(new("granularity",
+                () => granularity.SetValue(target.Variant, (float)values.Granularity),
+                () => granularity.SetValue(target.Variant, (float)current.Granularity)));
+        if (values.Impact != current.Impact)
+            steps.Add(new("amount",
+                () => amount.SetValue(target.Variant, (float)values.Impact),
+                () => amount.SetValue(target.Variant, (float)current.Impact)));
         var (scope, endScope) = BeginUndoScope(operation);
-        try
-        {
-            if (values.Type != current.Type)
-                grainType.SetValue(target.Variant, Enum.ToObject(grainType.PropertyType, values.Type));
-            if (values.Granularity != current.Granularity)
-                granularity.SetValue(target.Variant, (float)values.Granularity);
-            if (values.Impact != current.Impact)
-                amount.SetValue(target.Variant, (float)values.Impact);
-        }
-        finally
-        {
-            endScope.Invoke(scope, null);
-        }
+        NativeAdjustmentTransaction.Execute(steps, () => endScope.Invoke(scope, null));
     }
 
     private static (object Scope, MethodInfo EndScope) BeginUndoScope(string operation)

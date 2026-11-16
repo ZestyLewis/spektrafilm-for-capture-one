@@ -446,6 +446,13 @@ constexpr FrameLimit kNativePreviewLimit{16384, 100000000, "The native Viewer ac
 
 constexpr int kNativeFullFramePixels = 32000000;
 
+// Protocol version is independent of package version. Old one-shot/stream clients
+// still work; the managed host negotiates before submitting any frame bytes.
+constexpr int kProtocolVersion = 1;
+#ifndef SPEKTRA_PARAMETER_CONTRACT
+#error "The renderer build must identify its parameter contract."
+#endif
+
 std::streamsize byteCount(std::size_t components) {
     static_assert(sizeof(float) == 4, "The frame protocol uses 32-bit floats.");
     return static_cast<std::streamsize>(components * sizeof(float));
@@ -617,6 +624,44 @@ void writeError(std::string_view message) {
     writeReply(1, message.data(), static_cast<uint32_t>(message.size()));
 }
 
+void writeCapabilities(const FrameLimit &limit) {
+    std::ostringstream json;
+    json << "{\"protocol\":" << kProtocolVersion
+         << ",\"floatChannels\":4,\"floatBits\":32,\"littleEndian\":true,\"parameterContract\":\""
+         << SPEKTRA_PARAMETER_CONTRACT
+         << "\",\"maxSide\":" << limit.maxSide << ",\"maxPixels\":" << limit.maxPixels
+         << ",\"packedDisplay\":" << (&limit == &kNativePreviewLimit ? "true" : "false")
+         << ",\"metricsSchema\":1}";
+    const auto text = json.str();
+    writeReply(0, text.data(), static_cast<uint32_t>(text.size()));
+}
+
+void writeMetrics(const Renderer *renderer, uint64_t renderSequence, const InputFrame &input) {
+    const RendererDiagnostics empty{};
+    const auto &d = renderer ? renderer->lastDiagnostics() : empty;
+    std::ostringstream json;
+    json << "{\"schema\":1,\"renderSequence\":" << renderSequence
+         << ",\"sourceRevision\":" << input.revision
+         << ",\"width\":" << input.size.width << ",\"height\":" << input.size.height
+         << ",\"cpuSetupMs\":" << d.cpuSetupMs
+         << ",\"sourceCopyMs\":" << d.sourceCopyMs
+         << ",\"commandEncodingMs\":" << d.commandEncodingMs
+         << ",\"commandBufferMs\":" << d.commandBufferMs
+         << ",\"gpuCommandBufferMs\":" << d.gpuCommandBufferMs
+         << ",\"gpuTimingAvailable\":" << (d.passGpuTimingAvailable ? "true" : "false")
+         << ",\"outputCopyMs\":" << d.outputCopyMs
+         << ",\"uploadBytes\":" << d.uploadBytes
+         << ",\"staticAllocationBytes\":" << d.staticAllocationBytes
+         << ",\"scratchAllocationBytes\":" << d.scratchAllocationBytes
+         << ",\"transientCachedBytes\":" << d.transientCachedBytes
+         << ",\"transientBudgetBytes\":" << d.transientBudgetBytes
+         << ",\"passCount\":" << d.passCount
+         << ",\"tiled\":" << (d.tiledRendering ? "true" : "false")
+         << ",\"tileCount\":" << d.tileCount << '}';
+    const auto text = json.str();
+    writeReply(0, text.data(), static_cast<uint32_t>(text.size()));
+}
+
 void configureNativePreview(RenderParams &params, FrameSize size) {
     if (size.width * size.height <= kNativeFullFramePixels) return;
     if (params.grainEnabled && params.grainModel == GrainModel::GrainSynthesis)
@@ -634,12 +679,28 @@ void processStream(const FrameLimit &limit) {
     std::optional<std::vector<std::string>> renderedArguments;
     const bool nativePreview = &limit == &kNativePreviewLimit;
     uint64_t nextRevision = 0;
+    uint64_t renderSequence = 0;
     std::string line;
     try {
         while (readCommand(line)) {
             std::istringstream command(line);
             std::string verb;
             command >> verb;
+            if (verb == "HELLO") {
+                std::string version, extra;
+                if (!(command >> version) || version != "1" || (command >> extra)) {
+                    writeError("The renderer requires HELLO 1. Install a matching panel and renderer.");
+                    continue;
+                }
+                writeCapabilities(limit);
+                continue;
+            }
+            if (verb == "METRICS") {
+                std::string extra;
+                if (command >> extra) writeError("METRICS does not take arguments.");
+                else writeMetrics(renderer.get(), renderSequence, input);
+                continue;
+            }
             if (verb == "QUIT") {
                 std::string extra;
                 if (command >> extra) {
@@ -693,6 +754,7 @@ void processStream(const FrameLimit &limit) {
                 try {
                     if (!renderer) renderer = startRenderer();
                     renderFrame(*renderer, replacesInput ? replacement : input, params, output);
+                    ++renderSequence;
                 } catch (const std::exception &error) {
                     renderer.reset();
                     writeError(error.what());

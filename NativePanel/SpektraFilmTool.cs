@@ -79,6 +79,8 @@ internal static class SpektraFilmTool
             panel = new LookPanel(mainWindow, document);
             Holder = new ContentControl { Content = panel, HorizontalContentAlignment = HorizontalAlignment.Stretch };
             DockedContent = new UserControl { Content = Holder };
+            if (PanelPreferences.Current.Floating is { IsValid: true } saved)
+                floatingBounds = new Rect(saved.Left, saved.Top, saved.Width, saved.Height);
         }
 
         internal InspectorToolWpf Tool { get; }
@@ -91,6 +93,7 @@ internal static class SpektraFilmTool
             panel.FlushLooks();
         }
         internal Task<bool> ExportAsync(Window? owner) => panel.ExportAsync(useRecipeSize: true, owner);
+        internal void SetExportBridgeStatus(string? message) => panel.SetExportBridgeStatus(message);
         internal InspectorToolHeaderViewModel CreateDockedHeader(ILifeCycleRegistrationService registration) =>
             new InspectorToolHeaderViewModelBuilder(StartupHook.ProductName, () => Tool.Document, registration)
                 .DoShowActionMenu(new PanelActionMenu(() => floating is null ? "Float Tool" : "Show Floating Tool", ShowFloating))
@@ -119,6 +122,11 @@ internal static class SpektraFilmTool
                 window = CreateFloatingWindow(scroll);
                 if (floatingBounds is { } bounds)
                 {
+                    var desktop = new Rect(SystemParameters.VirtualScreenLeft, SystemParameters.VirtualScreenTop,
+                        SystemParameters.VirtualScreenWidth, SystemParameters.VirtualScreenHeight);
+                    if (!desktop.IntersectsWith(bounds))
+                        bounds = new Rect(SystemParameters.WorkArea.Left + 24, SystemParameters.WorkArea.Top + 24,
+                            Math.Min(bounds.Width, SystemParameters.WorkArea.Width), Math.Min(bounds.Height, SystemParameters.WorkArea.Height));
                     window.WindowStartupLocation = WindowStartupLocation.Manual;
                     window.Left = bounds.Left;
                     window.Top = bounds.Top;
@@ -200,7 +208,10 @@ internal static class SpektraFilmTool
                 return;
             var bounds = window.RestoreBounds;
             if (!bounds.IsEmpty)
+            {
                 floatingBounds = bounds;
+                PanelPreferences.Update(p => p with { Floating = new(bounds.Left, bounds.Top, bounds.Width, bounds.Height) });
+            }
             RestoreDock(window);
             if (!disposed)
                 StartupHook.Log($"{StartupHook.ProductName} panel is docked.");
@@ -235,6 +246,9 @@ internal static class SpektraFilmTool
             panel.Dispose();
             if (floating is { } window)
             {
+                var bounds = window.RestoreBounds;
+                if (!bounds.IsEmpty)
+                    PanelPreferences.Update(p => p with { Floating = new(bounds.Left, bounds.Top, bounds.Width, bounds.Height) });
                 RestoreDock(window);
                 window.Close();
             }
@@ -265,6 +279,7 @@ internal static class SpektraFilmTool
         };
         private readonly TextBlock status = new() { Margin = new Thickness(0, 5, 0, 0), TextWrapping = TextWrapping.Wrap };
         private readonly TextBlock saveError = new() { TextWrapping = TextWrapping.Wrap, Visibility = Visibility.Collapsed };
+        private readonly TextBlock exportBridgeStatus = new() { TextWrapping = TextWrapping.Wrap, Text = "Checking Capture One Export support…" };
         private readonly StackPanel controls = new() { IsEnabled = false };
         private readonly NativeSlider exposure;
         private readonly NativeSlider printExposure;
@@ -280,10 +295,12 @@ internal static class SpektraFilmTool
         private readonly StackPanel printing = new();
         private readonly Dictionary<string, (NativeSlider Slider, double Default)> development = new();
         private readonly SpatialPreview opticalPreview;
+        private readonly Button recoverSavedLook;
+        private readonly CancellationTokenSource lifetime = new();
+        private bool lutExporting;
         private Guid? displayedVariant;
         private bool selectionQueued;
         private LookOptions? options;
-        private LookBaker? baker;
         private bool settingValues;
         private bool disposed;
 
@@ -301,6 +318,10 @@ internal static class SpektraFilmTool
             var layout = new StackPanel { Margin = new Thickness(8, 5, 8, 9) };
             layout.Children.Add(enableSpektraFilm);
             layout.Children.Add(saveError);
+            recoverSavedLook = Button("Recover saved look…", TryRecoverSelectedLook);
+            recoverSavedLook.Visibility = Visibility.Collapsed;
+            layout.Children.Add(recoverSavedLook);
+            layout.Children.Add(exportBridgeStatus);
             layout.Children.Add(controls);
             Content = layout;
             AddStock(controls, "Processing mode", mode, () =>
@@ -324,6 +345,7 @@ internal static class SpektraFilmTool
             printExposure.ToolTip = "More light on the print stock makes the result darker.";
             strength = AddSlider(controls, "Look strength", 0, 100, 100, 1, "%");
             opticalPreview = SpatialPreview.BuildForPanel(window, CurrentSettings, UseSelectedLook);
+            layout.Children.Insert(3, opticalPreview.ExportControls);
             opticalPreview.SettingsChanged += SaveLook;
             opticalPreview.TrackSliderDrag(exposure);
             opticalPreview.TrackSliderDrag(printExposure);
@@ -379,7 +401,14 @@ internal static class SpektraFilmTool
             }));
         }
 
-        private bool IsSpektraFilmEnabled => !disposed && enableSpektraFilm.IsChecked == true;
+        private bool IsSpektraFilmEnabled => !disposed && enableSpektraFilm.IsChecked == true
+            && (displayedVariant is not { } variant || !looks.IsBlocked(variant));
+
+        internal void SetExportBridgeStatus(string? message)
+        {
+            exportBridgeStatus.Text = message ?? string.Empty;
+            exportBridgeStatus.Visibility = string.IsNullOrEmpty(message) ? Visibility.Collapsed : Visibility.Visible;
+        }
 
         private void OnEnabledChanged()
         {
@@ -394,6 +423,8 @@ internal static class SpektraFilmTool
             if (disposed)
                 return;
             var enabled = displayedVariant is not null && IsSpektraFilmEnabled;
+            recoverSavedLook.Visibility = displayedVariant is { } selected && looks.IsBlocked(selected)
+                ? Visibility.Visible : Visibility.Collapsed;
             enableSpektraFilm.IsEnabled = displayedVariant is not null && StocksReady;
             controls.IsEnabled = enabled && StocksReady;
             opticalPreview.SetEnabled(enabled);
@@ -405,11 +436,11 @@ internal static class SpektraFilmTool
                 return;
             FlushLooks();
             disposed = true;
+            lifetime.Cancel();
+            lifetime.Dispose();
             selections.CollectionsSelectionChanged -= OnCollectionsSelectionChanged;
             document.MessageBus.Unsubscribe<PrimaryVariantChangedMessage>(this);
-            opticalPreview.SetEnabled(false);
-            baker?.Dispose();
-            baker = null;
+            opticalPreview.Dispose();
         }
 
         private FrameworkElement MakeFilmControls()
@@ -434,6 +465,17 @@ internal static class SpektraFilmTool
             AddDevelopment(printing, "print_shadows", "Print shadow shape", -1, 1, 0, 0.05);
             AddDevelopment(printing, "print_highlights", "Print highlight shape", -1, 1, 0, 0.05);
             AddDevelopment(printing, "print_exhaustion", "Developer exhaustion", 0, 1, 0, 0.01, "%", 100);
+            var exhaustion = development["print_exhaustion"].Slider;
+            exhaustion.IsEnabled = false;
+            exhaustion.ToolTip = "Developer exhaustion is not supported by the image renderer. Existing preset values are preserved until you explicitly clear them.";
+            var exhaustionReset = Button("Clear unsupported developer exhaustion", () =>
+            {
+                exhaustion.Value = 0;
+                return Task.CompletedTask;
+            });
+            exhaustionReset.Visibility = Visibility.Collapsed;
+            exhaustion.ValueChanged += (_, _) => exhaustionReset.Visibility = exhaustion.Value == 0 ? Visibility.Collapsed : Visibility.Visible;
+            printing.Children.Add(exhaustionReset);
             AddDevelopment(printing, "print_bleach_bypass", "Print bleach bypass", 0, 1, 0, 0.01, "%", 100);
             AddDevelopment(printing, "cyan_filter", "Cyan filtration", 0, 120, 0, 1, "CC");
             AddDevelopment(printing, "magenta_filter", "Magenta filter shift", -60, 60, 0, 1, "CC");
@@ -472,11 +514,12 @@ internal static class SpektraFilmTool
             {
                 if (CurrentSettings() is { } settings)
                 {
+                    var original = HostProfile.CaptureTarget(window).SourcePath;
                     var picker = new SaveFileDialog { Filter = "Spektrafilm preset|*.spektra.json", FileName = "Film look.spektra.json" };
                     if (picker.ShowDialog() == true)
                     {
                         var preset = new PanelPreset(settings, opticalPreview.CaptureSettings(), 1);
-                        Run(() => PanelFiles.WritePreset(picker.FileName, preset), "Preset saved.");
+                        Run(() => PanelFiles.WritePreset(OutputPathGuard.Validate(picker.FileName, original), preset), "Preset saved.");
                     }
                 }
                 return Task.CompletedTask;
@@ -489,6 +532,8 @@ internal static class SpektraFilmTool
             export.Children.Add(Button("Export 33-point LUT…", () => ExportLutAsync(33)));
             export.Children.Add(Button("Export 65-point LUT…", () => ExportLutAsync(65)));
             section.Children.Add(export);
+            section.Children.Add(new TextBlock { Text = "Image export: 16-bit TIFF or PNG in sRGB. Capture One recipe size and crop are supported; recipe profiles, metadata, watermarking and naming tokens are not yet carried over.",
+                TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 5, 0, 0) });
             return Section("Presets and LUT export", section);
         }
 
@@ -511,6 +556,7 @@ internal static class SpektraFilmTool
                     throw new InvalidDataException("This preset version requires a different Spektrafilm build.");
                 if (preset.Look is not { } settings)
                     throw new InvalidDataException("The preset contains no look settings.");
+                ValidateLoadedSettings(settings, preset.Optics);
                 if (!SyncSelection() || displayedVariant != variant)
                     return;
                 ApplyControls(settings, preset.Optics);
@@ -527,6 +573,8 @@ internal static class SpektraFilmTool
         private void ApplyControls(LookSettings? look, SpatialPreview.Settings? optics, bool? enabled = null,
             GrainControls? grain = null)
         {
+            if (look is not null)
+                ValidateLoadedSettings(look, optics);
             settingValues = true;
             try
             {
@@ -587,12 +635,16 @@ internal static class SpektraFilmTool
                 {
                     var saved = looks.Read(variant);
                     ApplyControls(saved?.Look, saved?.Optics, saved?.Enabled ?? true, saved?.Grain);
+                    if (looks.RecoveryNotice is { } notice)
+                        status.Text = notice;
                 }
                 catch (Exception error)
                 {
-                    ApplyControls(null, null, true);
+                    looks.ProtectUnreadable(variant, error);
+                    ApplyControls(null, null, false);
                     status.Text = $"Could not load this image’s Spektrafilm look. {error.Message}";
                     StartupHook.Log(status.Text);
+                    ShowSaveError(status.Text);
                 }
             }
             return IsSpektraFilmEnabled;
@@ -605,8 +657,16 @@ internal static class SpektraFilmTool
             // The key belongs to the displayed controls, even if the host selection has just changed.
             look = look with { ScanInvert = scanInvert.IsChecked == true };
             var grain = new GrainControls(grainType.SelectedIndex, grainImpact.Value, grainSize.Value);
-            looks.Queue(variant, new VariantLook(look, opticalPreview.CaptureSettings(), IsSpektraFilmEnabled, Grain: grain));
-            FlushLooks();
+            try
+            {
+                looks.Queue(variant, new VariantLook(look, opticalPreview.CaptureSettings(), IsSpektraFilmEnabled, Grain: grain));
+                FlushLooks();
+            }
+            catch (Exception error)
+            {
+                ShowSaveError($"Spektrafilm could not save your look. {error.Message}");
+                UpdateEnabledState();
+            }
         }
 
         internal void FlushLooks()
@@ -614,16 +674,65 @@ internal static class SpektraFilmTool
             try
             {
                 looks.Flush();
-                saveError.Visibility = Visibility.Collapsed;
+                if (displayedVariant is not { } selected || !looks.IsBlocked(selected))
+                    saveError.Visibility = Visibility.Collapsed;
             }
             catch (Exception error)
             {
-                var message = $"Spektrafilm could not save your look. {error.Message}";
-                if (saveError.Visibility != Visibility.Visible || saveError.Text != message)
-                    StartupHook.Log(message);
-                saveError.Text = message;
-                saveError.Visibility = Visibility.Visible;
+                ShowSaveError($"Spektrafilm could not save your look. {error.Message}");
             }
+        }
+
+        private void ShowSaveError(string message)
+        {
+            if (saveError.Visibility != Visibility.Visible || saveError.Text != message)
+                StartupHook.Log(message);
+            saveError.Text = message;
+            saveError.Visibility = Visibility.Visible;
+        }
+
+        private Task TryRecoverSelectedLook()
+        {
+            if (!SyncSelection() || displayedVariant is not { } variant || !looks.IsBlocked(variant))
+            {
+                status.Text = "This image has no blocked saved look to reset.";
+                return Task.CompletedTask;
+            }
+            if (System.Windows.MessageBox.Show(
+                "Reset this image’s unreadable Spektrafilm look to defaults? The original saved file and any recovery edit will be preserved before replacement. Existing Capture One adjustments are unchanged.",
+                StartupHook.ProductName, MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes)
+                return Task.CompletedTask;
+            if (!SyncSelection() || displayedVariant != variant || !looks.IsBlocked(variant))
+                return Task.CompletedTask;
+            try
+            {
+                ApplyControls(null, null, false);
+                var look = CurrentSettings() ?? throw new InvalidOperationException("Film stocks are not ready.");
+                looks.ResetBlocked(variant, new VariantLook(look, opticalPreview.CaptureSettings(), true, Grain: DefaultGrain));
+                displayedVariant = null;
+                UseSelectedLook(variant);
+                saveError.Visibility = Visibility.Collapsed;
+                status.Text = "Saved look reset. The original files are preserved in the Look recovery folder.";
+            }
+            catch (Exception error)
+            {
+                ShowSaveError($"The saved look could not be reset. {error.Message}");
+                UpdateEnabledState();
+            }
+            return Task.CompletedTask;
+        }
+
+        private void ValidateLoadedSettings(LookSettings look, SpatialPreview.Settings? optics)
+        {
+            LookStateValidation.ValidateLook(look);
+            foreach (var (key, value) in look.Development)
+                if (!development.TryGetValue(key, out var item) || value < item.Slider.Minimum || value > item.Slider.Maximum)
+                    throw new InvalidDataException($"The saved development control '{key}' is unsupported or out of range.");
+            if (look.FilmPushPullMode is not "standard" and not "experimental")
+                throw new InvalidDataException("The saved push/pull model is unavailable.");
+            if (optics is null) return;
+            LookStateValidation.ValidateOptics(optics);
+            opticalPreview.ValidateSettings(optics);
         }
 
         private void SetPreset(LookSettings settings)
@@ -663,20 +772,30 @@ internal static class SpektraFilmTool
 
         private async Task ExportLutAsync(int resolution)
         {
-            if (!IsSpektraFilmEnabled || CurrentSettings() is not { } settings)
+            if (lutExporting || !IsSpektraFilmEnabled || CurrentSettings() is not { } settings)
                 return;
+            lutExporting = true;
             try
             {
-                if (!LookBaker.IsAvailable)
-                    throw new InvalidOperationException("Run Setup LUT Export.cmd to enable optional LUT export.");
+                var original = HostProfile.CaptureTarget(window).SourcePath;
+                var plan = NativeLutExporter.Prepare(opticalPreview.RendererOptions(settings, "srgb", "srgb", export: true));
+                if (MessageBox.Show("A 3D LUT captures the colour transform and Look strength. It cannot include image-dependent effects or Capture One adjustments.\n\nExcluded: "
+                    + string.Join(", ", plan.ExcludedEffects) + ".\n\nContinue with an sRGB LUT?", "Export Spektrafilm LUT",
+                    MessageBoxButton.OKCancel, MessageBoxImage.Information) != MessageBoxResult.OK)
+                    return;
                 var picker = new SaveFileDialog { Filter = "3D LUT|*.cube", FileName = $"Spektrafilm sRGB {resolution}.cube" };
                 if (picker.ShowDialog() != true)
                     return;
+                var path = OutputPathGuard.Validate(picker.FileName, original);
                 status.Text = "Baking the sRGB LUT…";
-                var cube = await (baker ??= new LookBaker()).ExportLutAsync(settings, resolution, CancellationToken.None);
+                var cube = await NativeLutExporter.ExportAsync(plan, resolution, settings.Strength, lifetime.Token);
                 if (!disposed)
                 {
-                    await File.WriteAllTextAsync(picker.FileName, cube);
+                    await Task.Run(() => PanelFiles.WriteAtomically(path, stream =>
+                    {
+                        using var writer = new StreamWriter(stream, new System.Text.UTF8Encoding(false), leaveOpen: true);
+                        writer.Write(cube);
+                    }, beforeCommit: () => OutputPathGuard.Validate(path, original)));
                     status.Text = "LUT exported.";
                 }
             }
@@ -685,6 +804,7 @@ internal static class SpektraFilmTool
                 if (!disposed)
                     Report(error);
             }
+            finally { lutExporting = false; }
         }
 
         private FrameworkElement MakeGrainControls()

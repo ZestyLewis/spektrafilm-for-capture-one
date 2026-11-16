@@ -22,9 +22,10 @@ internal static class SpektraExport
         _ => throw new InvalidOperationException("Choose 16-bit TIFF or PNG for the Spektrafilm file."),
     };
 
-    internal static void Save(string path, BitmapSource image, CancellationToken stop)
+    internal static void Save(string path, BitmapSource image, CancellationToken stop, string? originalPath = null)
     {
         stop.ThrowIfCancellationRequested();
+        if (originalPath is not null) OutputPathGuard.Validate(path, originalPath);
         var format = PixelFormatFor(path);
         if (image.Format != format)
             throw new InvalidDataException($"Spektrafilm export requires unpremultiplied {format} pixels.");
@@ -42,6 +43,10 @@ internal static class SpektraExport
             stop.ThrowIfCancellationRequested();
             encoder.Save(stream);
             stop.ThrowIfCancellationRequested();
+        }, beforeCommit: () =>
+        {
+            stop.ThrowIfCancellationRequested();
+            if (originalPath is not null) OutputPathGuard.Validate(path, originalPath);
         });
     }
 }

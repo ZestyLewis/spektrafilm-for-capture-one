@@ -7,9 +7,6 @@ using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 
-internal sealed record LookSettings(string Film, string Paper, double Exposure, double PrintExposure, double Strength,
-    string Mode, string SpectralMethod, bool ScanInvert, Dictionary<string, double> Development,
-    string FilmPushPullMode = "standard");
 internal sealed record Stock(string Id, string Label, string? Kind = null, string? ChannelModel = null);
 internal sealed record LookOptions(Stock[] Films, Stock[] Papers, Stock[] Modes, Stock[] SpectralMethods);
 
@@ -137,7 +134,7 @@ internal sealed class LookBaker : IDisposable
             };
             command.ArgumentList.Add("-u");
             command.ArgumentList.Add(Path.Combine(root, "lut_worker.py"));
-            command.Environment.Remove("DOTNET_STARTUP_HOOKS");
+            WorkerEnvironment.Sanitize(command);
             command.Environment.Remove("PYTHONPATH");
             command.Environment["PYTHONNOUSERSITE"] = "1";
             command.Environment["PYTHONUTF8"] = "1";

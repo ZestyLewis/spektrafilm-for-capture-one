@@ -17,7 +17,9 @@ Capture One provides older installers in your account when your license supports
 
 For portable use, run **Start Spektrafilm for Capture One.cmd** from the extracted folder and choose a catalog. Use that launcher or the desktop shortcut when you want to open Capture One with Spektrafilm.
 
-To update, close Capture One and run the new release's installer. The installer updates the existing installation in place, replaces its desktop shortcut, and retains saved looks and the optional LUT environment. To verify the download, use `Get-FileHash -Algorithm SHA256` on the ZIP and compare the result with the `.sha256` file on the release page.
+To update, close Capture One and run the new release's installer. The installer updates the existing installation in place, replaces its desktop shortcut, and retains saved looks and the optional Python environment. To verify the download, use `Get-FileHash -Algorithm SHA256` on the ZIP and compare the result with the `.sha256` file on the release page.
+
+Updates also preserve custom files inside bundled folders. If a new package conflicts with a customized file or folder, its previous contents are retained under **Recovered files** inside the installation. The installer prints that location. New packages carry build and file manifests; mismatched runtime files are rejected before installation or launch.
 
 ## Use the panel
 
@@ -41,9 +43,11 @@ With Spektrafilm enabled, select the photo and one enabled Export Recipe, then o
 
 The export path is for the selected image with one recipe. It supports up to 32 megapixels and an 8192 px long edge. Reduce recipe size if the source would exceed those limits. Turn off **Enable Spektrafilm** to export through Capture One alone.
 
-### Optional .cube export
+### .cube export
 
-Install 64-bit [Python 3.13](https://www.python.org/downloads/) and run **Setup LUT Export.cmd** in the installed folder. It creates a local environment and downloads the reference runtime's dependencies. Relaunch and choose a 33- or 65-point LUT from **Presets and LUT export**. The LUT uses sRGB input and output and represents the color transform. Keep the attribution in its header if you share it. [Profile and LUT license](upstream-spektrafilm/SPEKTRAFILM_LICENSE.txt)
+Choose a 33- or 65-point LUT from **Presets and LUT export**. It now uses the same Vulkan film engine as image processing and does not require Python. The LUT uses sRGB input and output, including look strength. Before export, the panel lists image-dependent effects that cannot be represented by a 3D LUT, such as grain, halation, diffusion and sharpening. Keep the attribution in its header if you share it. [Profile and LUT license](upstream-spektrafilm/SPEKTRAFILM_LICENSE.txt)
+
+The Python setup scripts remain available for reference/development workflows; they are not required for ordinary panel or LUT use.
 
 ## Troubleshooting and uninstall
 
@@ -55,7 +59,7 @@ Install 64-bit [Python 3.13](https://www.python.org/downloads/) and run **Setup 
 | Launcher finds an open or busy catalog | Open it in Capture One normally, close it, and retry. |
 | GPU or startup error | Run `.\Start-Spektrafilm.ps1 -CheckOnly` in PowerShell from the installed folder. It checks the release files, Capture One build and a Vulkan test frame. |
 
-Diagnostic logs and up to five database backups per catalog are under `%LOCALAPPDATA%\FilmToolsForCaptureOne`. The database backup covers the catalog database file. Keep your normal catalog and image backups as well.
+Diagnostic logs and up to five joint backups per catalog are under `%LOCALAPPDATA%\FilmToolsForCaptureOne`. Each new database backup has matching `.spektrafilm.zip` and `.manifest.json` files containing its saved looks, pending recovery records and checksums. Keep all three together. A look-only change creates a new backup even if the catalog database did not change. This does not include original image files or Capture One previews; keep your normal image backups as well.
 
 To uninstall, close Capture One, delete the **Spektrafilm for Capture One** desktop shortcut, and remove the installation folder printed by the installer. Keep the saved looks and catalog backups under `%LOCALAPPDATA%\FilmToolsForCaptureOne` if you want to use them later. If you used portable mode, remove the extracted folder.
 
@@ -67,10 +71,18 @@ Building requires Windows x64, Visual Studio 2022 with Desktop development with 
 & $python -m pip install -r .\requirements-build.txt
 .\Build-Windows.ps1 -BuildPanel -StageRuntime -PythonPath $python
 .\Start-Spektrafilm.ps1 -CheckOnly
-.\Package-Windows.ps1 -Version 0.1.1
+.\Package-Windows.ps1 -Version 0.1.1 -Development
 ```
 
 Use `-VulkanSdkPath` to specify a Vulkan SDK location or `-CaptureOneDirectory` for a custom Capture One installation. The build runs the renderer smoke test by default. Packaging writes the archive and SHA-256 checksum to `dist`. See the [upstream build and changes](UPSTREAM-CHANGES.md) and [third-party notices](THIRD-PARTY.md).
+
+`-Development` explicitly labels local test packages, including builds containing uncommitted changes. Public release packaging omits that switch and requires clean committed source, a matching `v<Version>` tag, passed renderer smoke tests, and matching runtime/source manifests. A partial rebuild or changed shader/table is rejected. The manifest records source, host assembly and runtime hashes without redistributing Capture One components.
+
+## Run the contract tests
+
+Run `./Test-Windows.ps1` from a Windows checkout with the .NET 8 SDK or newer. This tests saved-state and renderer contracts, viewer geometry, exact 16-bit output, release manifests, and installation into disposable folders. It does not open Capture One or use the real Desktop. Logs and JSON summaries are written to `.test-results`.
+
+Add `-Gpu -PythonPath $python` after staging a renderer to run the Vulkan smoke suite as well. GPU and real Capture One integration are reported separately from the public no-host suite; passing the latter does not certify another Capture One version. GitHub runs the no-host suite on hosted Windows runners for pull requests, with read-only repository permissions and no private credentials.
 
 ## Contribute a compatibility fix
 

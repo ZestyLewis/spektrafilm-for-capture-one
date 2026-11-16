@@ -1,0 +1,1880 @@
+{
+  "schema_version": 1,
+  "date": "2026-11-16",
+  "project": "Spektrafilm for Capture One",
+  "baseline_commit": "d56ebefe023cd32ca6bf3a129ae7add02ff0b6b4",
+  "source_plan": "../Audit-2026-11-16/IMPLEMENTATION-PLAN.json",
+  "scope": "High-priority implementation batch in isolated audit worktree; not a complete 70-task audit closure.",
+  "full_audit_complete": false,
+  "status_definitions": {
+    "implemented": "The primary bounded fix is implemented. Proof and remaining validation are explicitly bounded; this is not a claim of full platform or every acceptance-matrix coverage.",
+    "partial": "A mitigation or prerequisite is implemented, but material requested architecture/behavior or validation remains.",
+    "pending": "No substantive implementation for this task in this batch; retain original plan guidance."
+  },
+  "validation": {
+    "no_gpu": {
+      "status": "passed",
+      "command": "powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File Test-Windows.ps1 -ResultsDirectory '.test-results\\final-contracts'",
+      "summary": ".test-results/final-contracts/summary.json",
+      "passes": {
+        "renderer_client": 81,
+        "state_recovery": 133,
+        "viewer_contracts": 9789,
+        "manifest": 9,
+        "catalog_backup": 17,
+        "installer": 26
+      },
+      "initial_failure_fixed": "Relative fixture userData caused incorrect ZIP entry-prefix slicing. Backup root and runner output paths are now normalized; explicit relative-userData regression passes.",
+      "not_run": [
+        "GPU tier by design; separate renderer GPU evidence above.",
+        "Host tier by design; separate disposable-host evidence above."
+      ],
+      "skipped": [
+        "Viewer symlink creation lacks privilege."
+      ]
+    },
+    "gpu": {
+      "status": "passed",
+      "checks": 9,
+      "command": "dotnet run --project tests/renderer/RendererContracts.csproj -c Release -- --gpu build/renderer-gpu-fixture",
+      "maximum_lut_sample_code_error": 5.000000413701855E-10,
+      "scope": "Synthetic 8x8 renderer environment isolation, handshake/metrics/cache;33/65 sampled LUT parity. Existing parent-generated data/shaders used for this isolated helper test, not complete release provenance."
+    },
+    "native_smoke": {
+      "status": "passed",
+      "command": "python ofx-still-renderer/smoke.py --exe build/still-renderer/Release/SpektraStillRenderer.exe",
+      "scope": "Persistent streams/error recovery/export limits/output encodings/14 effect deltas/two scan inversions; not universal scientific correctness."
+    },
+    "host": {
+      "status": "passed",
+      "first_launch_assertions": 17,
+      "restart_assertions": 19,
+      "total_assertions": 36,
+      "evidence": ".test-results/host-final/host-smoke.log",
+      "source": "qa/HostSmoke",
+      "source_catalog_unchanged": true,
+      "scope": [
+        "Actual supported-host panel and native Export hook binding.",
+        "Disposable DNG development: native6000x4000 and scaled720/1200 sources are16-bit.",
+        "Real GPU float32 transport and TIFF output retain16bits per RGB channel and expected dimensions.",
+        "Actual native grain apply and exact prior-value restore.",
+        "Legacy quality preferences accepted; each tested slider movement immediately persisted.",
+        "Second process restores exposure1.2 and disabled master while tool remains present."
+      ],
+      "not_proven": [
+        "Native Export dialog command/confirmation user flow; only hook binding and underlying pipeline tested.",
+        "Every RAW/camera/profile/host version;16.7 remains unsupported.",
+        "Export while navigating to disabled variant, arbitrary host teardown races, crash/power-loss durability and native undo integration."
+      ],
+      "test_environment_note": "Root reports a prior deliberate-crash marker blocked host startup; only test-owned crash markers were backed up/cleaned before successful rerun."
+    }
+  },
+  "known_limitations": [
+    "Capture One16.7 remains unsupported; exact stable version gate remains.",
+    "Spektrafilm editing is outside native undo/redo/copy/apply/clone semantics.",
+    "Native histograms, pickers, proofing and monitor ICC behavior are not proven to describe the Spektrafilm overlay.",
+    "Current source is Capture One-developed bounded16-bit data converted to float32, not proven pre-tone-map scene-linear RAW.",
+    "Export remains16-bit sRGB TIFF/PNG; full recipe profile/metadata/naming/watermark/DPI policy is not implemented; output pipeline supplies96DPI.",
+    "Export remains capped at32MP/8192side; native preview100MP/16384side and grain-synthesis32MP constraints remain.",
+    "Floating preference Sections property is not wired; section expansion/scroll/dock-state are not persisted.",
+    "State backups remain path-keyed archives, not portable catalog identity or automatic cross-directory restore.",
+    "No global GPU-memory admission, adaptive viewport quality, cooperative worker cancellation or comprehensive performance budget exists.",
+    "Native grain restore receipts remain process-local; preserved values do not imply cross-restart restore ownership.",
+    "No release, GitHub publication or production install is represented by this report."
+  ],
+  "tasks": [
+    {
+      "id": "FIX-01",
+      "title": "Immediately surface failed native Export binding",
+      "priority": "P1",
+      "status": "partial",
+      "implemented": [
+        "Native Export attach failures now create a persistent panel warning with an explicit alternative export route."
+      ],
+      "evidence_paths": [
+        "NativePanel/StartupHook.cs",
+        "NativePanel/SpektraFilmTool.cs"
+      ],
+      "remaining_work": [
+        "Add missing-binding/rollback fault injection and typed capability transitions; successful binding in disposable host does not prove failure handling."
+      ],
+      "original_acceptance_tests": [
+        "Missing first/second binding produces unavailable status and original delegates restored.",
+        "Failure message does not disappear after slider movement; direct plugin export is independently enabled only when supported."
+      ],
+      "dependencies": []
+    },
+    {
+      "id": "FIX-02",
+      "title": "Disable the developer-exhaustion control that cannot render",
+      "priority": "P1",
+      "status": "implemented",
+      "implemented": [
+        "Developer exhaustion is disabled; saved nonzero values are retained and a separate explicit clear action is available."
+      ],
+      "evidence_paths": [
+        "NativePanel/SpektraFilmTool.cs",
+        "NativePanel/SpatialPreview.cs"
+      ],
+      "remaining_work": [
+        "Run an automated host interaction for a nonzero legacy exhaustion preset and its explicit reset; no scientific exhaustion implementation is claimed."
+      ],
+      "original_acceptance_tests": [
+        "Default editing remains functional; unsupported control cannot emit a failing new native request.",
+        "Nonzero legacy preset gives a clear unsupported-look state and preserves the original preset/state."
+      ],
+      "dependencies": []
+    },
+    {
+      "id": "FIX-03",
+      "title": "Do not cancel an accepted export when selecting a disabled image",
+      "priority": "P1",
+      "status": "implemented",
+      "implemented": [
+        "Accepted image exports own cancellation independently of SetEnabled/selection; explicit cancel and document disposal cancel the job."
+      ],
+      "evidence_paths": [
+        "NativePanel/ExportOperation.cs",
+        "NativePanel/SpatialPreview.cs",
+        "tests/ViewerContracts/Program.cs",
+        ".test-results/host-final/host-smoke.log"
+      ],
+      "remaining_work": [
+        "Add a real-host A-export/select-disabled-B race and close-during-export test; unit evidence covers token ownership and source review confirms captured settings."
+      ],
+      "original_acceptance_tests": [
+        "Selecting disabled B during A export does not cancel or change A output.",
+        "Explicit cancel still prevents final replacement and preserves prior destination.",
+        "Closing document follows a declared cancel/finish policy with no stale host access."
+      ],
+      "dependencies": []
+    },
+    {
+      "id": "HS-03",
+      "title": "Unreadable or future-version state can be replaced by defaults",
+      "priority": "P1",
+      "status": "partial",
+      "implemented": [
+        "Unreadable/future/invalid saved states are blocked and preserved, with explicit backed-up reset rather than silent default overwrite."
+      ],
+      "evidence_paths": [
+        "NativePanel/VariantLookStore.cs",
+        "NativePanel/LookStateValidation.cs",
+        "NativePanel/PanelFiles.cs",
+        "tests/state/Program.cs"
+      ],
+      "remaining_work": [
+        "Add independently retried transient-I/O load outcomes and generation/journal recovery; validate all unavailable-stock/UI cases in host."
+      ],
+      "original_acceptance_tests": [
+        "future schema, missing stock, truncated UTF-8, malformed dictionary, too-large file, temporary sharing violation. Assert originals survive any normal slider movement and no defaults are silently committed over unrecognized data."
+      ],
+      "dependencies": []
+    },
+    {
+      "id": "RC-01",
+      "title": "Isolate production render workers from inherited experiment flags",
+      "priority": "P1",
+      "status": "implemented",
+      "implemented": [
+        "Production launcher/renderer/reference-worker children remove inherited SPEKTRAFILM_* and DOTNET_STARTUP_HOOKS; parent environment is unchanged."
+      ],
+      "evidence_paths": [
+        "NativePanel/WorkerEnvironment.cs",
+        "NativePanel/OpticalRenderer.cs",
+        "NativePanel/LookBaker.cs",
+        "Start-Spektrafilm.ps1",
+        "tests/renderer/Program.cs"
+      ],
+      "remaining_work": [
+        "No visible developer override mode was introduced. Extend numerical contamination matrix beyond COPY_PASS if a supported developer mode is added."
+      ],
+      "original_acceptance_tests": [
+        "8x8 exposure+2 clean vs contaminated environment; production outputs must match",
+        "Test copy-pass, print-pass and grain-pass bypass flags",
+        "Verify no global environment mutation",
+        "Validate export and preview use same policy"
+      ],
+      "dependencies": []
+    },
+    {
+      "id": "RQ-01",
+      "title": "Preserve custom files through installation upgrades",
+      "priority": "P1",
+      "status": "partial",
+      "implemented": [
+        "Installer now uses owned-runtime metadata, recursively preserves unknown files and retains rollback material; inert install fixtures are tracked."
+      ],
+      "evidence_paths": [
+        "Install-Spektrafilm.ps1",
+        "tests/installer/Test-Installer.ps1"
+      ],
+      "remaining_work": [
+        "Inert installer tests pass26assertions. Complete fresh full-build/package/install validation and remaining lock/reparse/shortcut/interrupted-move matrix; no production installation is claimed."
+      ],
+      "original_acceptance_tests": [
+        "New install, same-version upgrade, legacy-name upgrade and nested/top-level user-file preservation.",
+        "Case collisions, Unicode and space-containing paths, inaccessible Desktop, locked binary, file-vs-directory collision, interrupted move and failed rollback.",
+        "Source and destination hashes of all user sentinels remain equal; no real Desktop/installed folder changes in CI."
+      ],
+      "dependencies": []
+    },
+    {
+      "id": "RQ-02",
+      "title": "Make audit regression harnesses reproducible from a public checkout",
+      "priority": "P1",
+      "status": "partial",
+      "implemented": [
+        "Public source-linked state, renderer, viewer and installer contracts plus a no-host entry point are tracked; GPU and host prerequisites are separate."
+      ],
+      "evidence_paths": [
+        "Test-Windows.ps1",
+        "tests/state",
+        "tests/renderer",
+        "tests/ViewerContracts",
+        "tests/installer",
+        "qa/HostSmoke"
+      ],
+      "remaining_work": [
+        "Final no-host runner passes all six requested suites. Run the exact public checkout/CI; complete nonconstant resampling reference and host late-callback seams."
+      ],
+      "original_acceptance_tests": [
+        "Fresh checkout on Windows with .NET SDK runs pure suite without Capture One DLL redistribution.",
+        "Injected versions of known corruption/installer/geometry errors fail the corresponding tests.",
+        "Tests leave user catalogs, Desktop and installation untouched and report each skipped hardware/host prerequisite."
+      ],
+      "dependencies": []
+    },
+    {
+      "id": "RC-10",
+      "title": "Reset worker on protocol corruption and version request contract",
+      "priority": "P2",
+      "status": "partial",
+      "implemented": [
+        "Malformed frames/capabilities reset worker and source cache; bounded HELLO negotiation, immutable-shape validation, serialized requests and cancellation recovery pass fake-worker tests."
+      ],
+      "evidence_paths": [
+        "NativePanel/OpticalRenderer.cs",
+        "ofx-still-renderer/main.cpp",
+        "tests/renderer/Program.cs"
+      ],
+      "remaining_work": [
+        "Request IDs and fully versioned per-frame layout metadata remain absent; transport is safe only with enforced one-in-flight serialization."
+      ],
+      "original_acceptance_tests": [
+        "Fake-worker bad code/size/oversized error/short body/version mismatch",
+        "Next good request restarts cleanly",
+        "Concurrent request serialization",
+        "Cancel mid-payload and EOF",
+        "Source dimensions/layout validation"
+      ],
+      "dependencies": []
+    },
+    {
+      "id": "VE-16",
+      "title": "Commit host-independent geometry and high-depth output contract tests",
+      "priority": "P2",
+      "status": "partial",
+      "implemented": [
+        "Tracked pure tests verify affine geometry, exact 16-bit TIFF/PNG samples, ICC, atomic-write preservation, draft filtering and cancellation."
+      ],
+      "evidence_paths": [
+        "tests/ViewerContracts",
+        "NativePanel/ColorTransfer.cs",
+        "NativePanel/ViewerDraftSource.cs"
+      ],
+      "remaining_work": [
+        "Add independent nonconstant area-resampling/crop references and disposable-host rotate/flip/keystone/DPI cases; symlink test was skipped for unavailable privilege."
+      ],
+      "original_acceptance_tests": [
+        "Run CI Windows matrix on supported .NET target without installed Capture One for pure tests.",
+        "TIFF RGB48 and PNG RGBA64 samples include differences smaller than 1/255; wrong input format and canceled write retain destination.",
+        "Geometry degeneracy, epsilon closure, offscreen clip, mirrored winding, quarter-turn, high DPI coordinate contract.",
+        "Record host-dependent cases separately and never treat skipped host checks as pass."
+      ],
+      "dependencies": []
+    },
+    {
+      "id": "HS-12",
+      "title": "Version support is a binary gate, not a capability contract",
+      "priority": "P1",
+      "status": "pending",
+      "implemented": [],
+      "evidence_paths": [],
+      "remaining_work": [
+        "separate bootstrap with minimal dependencies from version-specific host adapter",
+        "declare/probe member signatures and semantics for catalog/selection, palette, viewer geometry, source precision, export and undo",
+        "emit deterministic compatibility report before attachment/mutation",
+        "feature matrix with tested host build+assembly fingerprints",
+        "unsupported optional feature degrades independently while required source/export contract fails closed. Gate is removed only for a fully tested adapter, never just because reflection found a name."
+      ],
+      "original_acceptance_tests": [
+        "mock signature drift plus exact installed supported host integration test on copied catalog",
+        "16.7 contributor patch reviewed in isolated branch",
+        "semantic pixel/geometry/export verification per build."
+      ],
+      "dependencies": []
+    },
+    {
+      "id": "RC-05",
+      "title": "Define developed-image colour/range contract and test earlier host seam",
+      "priority": "P1",
+      "status": "partial",
+      "implemented": [
+        "Normal viewer input now stays high-depth at small resolutions; documentation distinguishes developed bounded output from raw scene-linear data."
+      ],
+      "evidence_paths": [
+        "NativePanel/HostImageSource.cs",
+        "NativePanel/SpatialPreview.cs",
+        "README.md",
+        "qa/HostSmoke"
+      ],
+      "remaining_work": [
+        "Implement immutable full frame descriptor and camera/WB/highlight/ramp parity; earlier scene-linear host seam remains unproven."
+      ],
+      "original_acceptance_tests": [
+        "Camera profile/WB/highlight recovery and ICC source cases",
+        "Exposure ramps distinguish encoded linear from scene-linear",
+        "Native TIFF matching same stage",
+        "Reject false camera-log labeling",
+        "Descriptor participates in all cache keys"
+      ],
+      "dependencies": []
+    },
+    {
+      "id": "HS-18",
+      "title": "Model state is entangled with a large imperative view",
+      "priority": "P2",
+      "status": "partial",
+      "implemented": [
+        "Some contracts are extracted into LookSettings, validation, preferences, cancellation, colour transfer, and native LUT helpers."
+      ],
+      "evidence_paths": [
+        "NativePanel/LookSettings.cs",
+        "NativePanel/LookStateValidation.cs",
+        "NativePanel/ExportOperation.cs",
+        "NativePanel/RenderCoordination.cs"
+      ],
+      "remaining_work": [
+        "The imperative WPF panel still owns model/control/scheduler concerns; complete incremental controller/host-adapter separation with headless session tests."
+      ],
+      "original_acceptance_tests": [
+        "headless selection/edit/undo/preset/recovery tests",
+        "docking/floating uses same session",
+        "zero pixel changes for serialized old looks."
+      ],
+      "dependencies": []
+    },
+    {
+      "id": "RC-16",
+      "title": "Surface renderer diagnostics and build numerical/performance contract suite",
+      "priority": "P2",
+      "status": "partial",
+      "implemented": [
+        "HELLO and METRICS expose bounded protocol/float/contract data and Vulkan timings, uploads and allocations; synthetic GPU/LUT and no-GPU suites exist."
+      ],
+      "evidence_paths": [
+        "ofx-still-renderer/main.cpp",
+        "NativePanel/OpticalRenderer.cs",
+        "tests/renderer",
+        "ofx-still-renderer/smoke.py"
+      ],
+      "remaining_work": [
+        "Add frame/build/settings identity to diagnostics, structured whole-pipeline telemetry, quality oracles, tiled parity and hardware p50/p95/memory budgets."
+      ],
+      "original_acceptance_tests": [
+        "FRAME8/REUSE8 native parity and source replacement",
+        "Tiled/full equivalence and high-size policy",
+        "Each effect numerical oracle not only nonzero delta",
+        "RAW-derived full workflow on exact host build",
+        "No image/private path data in shared diagnostics"
+      ],
+      "dependencies": []
+    },
+    {
+      "id": "HS-04",
+      "title": "Pending save failures are lost during disposal",
+      "priority": "P1",
+      "status": "partial",
+      "implemented": [
+        "Failed writes survive panel recreation in session state and independent durable recovery checkpoints; separate-process replay is tested and total storage failure is explicit."
+      ],
+      "evidence_paths": [
+        "NativePanel/VariantLookStore.cs",
+        "NativePanel/SpektraFilmTool.cs",
+        "tests/state/Program.cs"
+      ],
+      "remaining_work": [
+        "Add full host shutdown/close-error notification and disk-full testing; no persistence guarantee is possible if primary and recovery storage are both unavailable."
+      ],
+      "original_acceptance_tests": [
+        "deny replacement, fill disk, then close/remove/recreate tab",
+        "recover same values next launch and retain original file. Acknowledge that no software can promise durable edits when all storage is unavailable."
+      ],
+      "dependencies": [
+        "HS-03"
+      ]
+    },
+    {
+      "id": "RC-11",
+      "title": "Admit rendering by real memory budgets across worker contexts",
+      "priority": "P1",
+      "status": "pending",
+      "implemented": [],
+      "evidence_paths": [],
+      "remaining_work": [
+        "Measure host+worker+GPU peak by graph and format",
+        "Estimate requested graph peak and reserve cross-context tokens",
+        "Use conservative system/adapter budgets and release idle buffers",
+        "Coordinate draft/full/export priorities",
+        "Gracefully propose smaller viewer when needed; never silently resize export",
+        "Evaluate one worker/multiple contexts under explicit isolation contract"
+      ],
+      "original_acceptance_tests": [
+        "4/6/8GB GPU scenarios and100MP source sizing",
+        "Full+draft+export and alternating sizes",
+        "Cancel/idle releases bounded memory",
+        "Per-buffer/VRAM telemetry aligns with estimates",
+        "OOM failure preserves host/source/export integrity"
+      ],
+      "dependencies": [
+        "RC-05",
+        "RC-16"
+      ]
+    },
+    {
+      "id": "VE-01",
+      "title": "Expose export-hook capability and prevent silent unprocessed native exports",
+      "priority": "P1",
+      "status": "partial",
+      "implemented": [
+        "An export bind failure is visible and explicit plugin export remains distinct; actual supported-host binding was observed."
+      ],
+      "evidence_paths": [
+        "NativePanel/StartupHook.cs",
+        "NativePanel/SpektraFilmTool.cs",
+        "qa/HostSmoke"
+      ],
+      "remaining_work": [
+        "Implement complete capability/preflight state and fault injection for both commands/dialog closures, then verify each route and teardown on exact builds."
+      ],
+      "original_acceptance_tests": [
+        "Inject missing first command, missing second command, wrong closure field/type and changed method name; assert original delegates restored exactly once and capability unavailable.",
+        "Assert enabled film plus unavailable hook produces clear visible warning and direct plugin export remains independently testable.",
+        "Test supported host Export, ExportWithPrevious and dialog confirmation; no double export or duplicate callback after detach/reattach."
+      ],
+      "dependencies": [
+        "FIX-01",
+        "HS-12"
+      ]
+    },
+    {
+      "id": "HS-11",
+      "title": "No single validated parameter schema drives controls and state",
+      "priority": "P2",
+      "status": "partial",
+      "implemented": [
+        "Saved look/preset dictionaries, types, ranges, unknown fields and UI enum options are validated before application; parameter header is fingerprinted."
+      ],
+      "evidence_paths": [
+        "NativePanel/LookStateValidation.cs",
+        "NativePanel/PanelFiles.cs",
+        "NativePanel/SpektraFilmTool.cs",
+        "NativePanel/SpatialPreview.cs",
+        "tests/state"
+      ],
+      "remaining_work": [
+        "A canonical generated parameter schema with migrations, dependencies, capability parity and upstream enumeration remains unimplemented."
+      ],
+      "original_acceptance_tests": [
+        "enumerate all upstream exposed controls and exact wire mappings",
+        "fuzz bounded JSON",
+        "missing/null/unknown keys",
+        "range boundary roundtrips",
+        "modes never show executable-but-unsupported controls",
+        "manifest parity check in CI."
+      ],
+      "dependencies": [
+        "HS-18"
+      ]
+    },
+    {
+      "id": "HS-15",
+      "title": "Incomplete explicit lifetime boundary for host and preview subscriptions",
+      "priority": "P2",
+      "status": "partial",
+      "implemented": [
+        "SpatialPreview has explicit disposal that stops/unsubscribes timer and viewer events and cancels owned work; LookPanel delegates disposal."
+      ],
+      "evidence_paths": [
+        "NativePanel/SpatialPreview.cs",
+        "NativePanel/SpektraFilmTool.cs",
+        "NativePanel/OpticalRenderer.cs"
+      ],
+      "remaining_work": [
+        "Add asynchronous bounded teardown, constructor-failure rollback, dispatcher/Idle ownership audit and 100-cycle host leak/handle tests."
+      ],
+      "original_acceptance_tests": [
+        "100 attach/detach/float cycles, close during render/export/load, canceled host close, weak references become collectible, no orphan workers or dispatcher callbacks",
+        "NativePanel handle/memory baseline."
+      ],
+      "dependencies": [
+        "HS-12"
+      ]
+    },
+    {
+      "id": "RC-04",
+      "title": "Remove resolution-dependent physical blur truncation",
+      "priority": "P2",
+      "status": "pending",
+      "implemented": [],
+      "evidence_paths": [],
+      "remaining_work": [
+        "Enumerate reachable sigma and selected blur backends",
+        "Measure impulse tail/energy/second moment vs reference",
+        "Implement validated multiscale or recursive large-sigma path",
+        "Recompute tile overlap from actual chosen support",
+        "Version appearance changes and coordinate upstream"
+      ],
+      "original_acceptance_tests": [
+        "Impulse response at 8mm/35mm/IMAX extremes",
+        "Full resolution then downsample vs lower resolution tolerance",
+        "Tiled/full parity and boundaries",
+        "Energy conservation and colour channel tails",
+        "Performance budget with same fidelity"
+      ],
+      "dependencies": [
+        "RC-05",
+        "RC-16"
+      ]
+    },
+    {
+      "id": "RC-09",
+      "title": "Unify look-strength blending and clipping policy",
+      "priority": "P2",
+      "status": "partial",
+      "implemented": [
+        "Native LUT strength now matches current image-delivery sRGB linear-light blending, finite validation and clipping policy."
+      ],
+      "evidence_paths": [
+        "NativePanel/NativeLutExporter.cs",
+        "tests/renderer/Program.cs"
+      ],
+      "remaining_work": [
+        "No policy/version migration or shared GPU/managed blend implementation; all output spaces, HDR clipping location and continuity need explicit numerical contracts."
+      ],
+      "original_acceptance_tests": [
+        "Synthetic linear baseline.25/processed1.5/strength.5 expected policy",
+        "Negative components and every output transfer",
+        "0/epsilon/.5/1 continuity",
+        "Saturated highlight chart",
+        "NaN/Inf rejection"
+      ],
+      "dependencies": [
+        "RC-05",
+        "RC-16"
+      ]
+    },
+    {
+      "id": "RC-15",
+      "title": "Add cooperative cancellation and stage progress to worker protocol",
+      "priority": "P2",
+      "status": "partial",
+      "implemented": [
+        "Cancellation now safely aborts the child and resets its stream/cache; fake-worker mid-request and queued cancellation pass."
+      ],
+      "evidence_paths": [
+        "NativePanel/OpticalRenderer.cs",
+        "tests/renderer/Program.cs"
+      ],
+      "remaining_work": [
+        "Cooperative pass/tile cancellation, request IDs, progress channel and bounded warm restart policy are still absent."
+      ],
+      "original_acceptance_tests": [
+        "Cancel at upload/GPU/readback/file write",
+        "Stuck worker and device loss",
+        "New selection overtakes old job without stale publish",
+        "Progress stages truthful and monotonic",
+        "No orphan children"
+      ],
+      "dependencies": [
+        "RC-10",
+        "RC-16"
+      ]
+    },
+    {
+      "id": "VE-07",
+      "title": "Introduce a generation-aware preview scheduler with bounded obsolete work",
+      "priority": "P2",
+      "status": "partial",
+      "implemented": [
+        "Final source no longer waits for optional draft; obsolete settled renders are cancelled and transport serializes requests."
+      ],
+      "evidence_paths": [
+        "NativePanel/RenderCoordination.cs",
+        "NativePanel/SpatialPreview.cs",
+        "tests/ViewerContracts",
+        "tests/renderer"
+      ],
+      "remaining_work": [
+        "Implement the broader generation-aware latest-request scheduler, adaptive watchdog, retries and exhaustive out-of-order publication tests; no latency improvement claim."
+      ],
+      "original_acceptance_tests": [
+        "Deterministic virtual clock and delayed fake renderer: latest settled request publishes; out-of-order final/draft completions never regress quality or variant.",
+        "Burst 100 slider changes: queue stays bounded, no 100-job backlog; current source reused if native adjustments unchanged.",
+        "Worker timeout, process death and host proxy-pending states recover without forcing arbitrary slider movement.",
+        "Scheduler tests explicitly cover disabled, detached, inactive document, export-active, source-changed and disposed states."
+      ],
+      "dependencies": [
+        "HS-18"
+      ]
+    },
+    {
+      "id": "RC-17",
+      "title": "Vectorize measured host/export conversion bottlenecks under shared CPU budget",
+      "priority": "P3",
+      "status": "pending",
+      "implemented": [],
+      "evidence_paths": [],
+      "remaining_work": [
+        "Measure conversion share before optimizing",
+        "Format-specialized Span/MemoryMarshal/SIMD scalar-equivalent loops",
+        "Bounded reusable buffers and central CPU worker budget",
+        "Parallel independent export rows with cancellation",
+        "Retain host bitmap lifetime until complete"
+      ],
+      "original_acceptance_tests": [
+        "Exact RGB16/RGBA16/RGB32F scalar equivalence",
+        "Padded rows/alpha/1-row/finite errors",
+        "Cancellation while host bitmap remains valid",
+        "16bit ramp and export rounding",
+        "Warm/cold throughput and allocation comparison"
+      ],
+      "dependencies": [
+        "RC-05",
+        "RC-16"
+      ]
+    },
+    {
+      "id": "HS-01",
+      "title": "Per-movement durable persistence blocks native interaction",
+      "priority": "P1",
+      "status": "partial",
+      "implemented": [
+        "Identical already-durable look writes are deduplicated; movement persistence remains synchronous with compact atomic files and recovery safeguards."
+      ],
+      "evidence_paths": [
+        "NativePanel/VariantLookStore.cs",
+        "NativePanel/PanelFiles.cs",
+        "tests/state",
+        "qa/HostSmoke",
+        ".test-results/host-final/host-smoke.log"
+      ],
+      "remaining_work": [
+        "Ordered durable generation journal, background compaction, backpressure and process-kill/power-loss boundaries remain unimplemented; measure UI write latency."
+      ],
+      "original_acceptance_tests": [
+        "kill process between every append/flush/ack/compact/replace step",
+        "replay exact last acknowledged generation",
+        "execute 10,000 rapid mixed edits and selection changes",
+        "exercise disk-full/permission failures",
+        "p50/p95/p99 UI event time and save acknowledgement latency. Separate Capture One process crash, OS crash and power-loss guarantees."
+      ],
+      "dependencies": [
+        "HS-18",
+        "HS-03",
+        "HS-04"
+      ]
+    },
+    {
+      "id": "RC-02",
+      "title": "Unify source precision across viewer resolution choices",
+      "priority": "P1",
+      "status": "implemented",
+      "implemented": [
+        "Every settled viewer resolution uses original high-depth native/scaled processing; disposable-host DNG native6000x4000 and720/1200 sources were observed at16bits, with actual float32 processing and16-bit TIFF output."
+      ],
+      "evidence_paths": [
+        "NativePanel/SpatialPreview.cs",
+        "NativePanel/HostImageSource.cs",
+        "qa/HostSmoke",
+        ".test-results/host-final/host-smoke.log"
+      ],
+      "remaining_work": [
+        "Temporary initial draft remains a proxy route and is replaced by final development; complete dark-ramp/source-descriptor, RAW camera/WB/highlight and resolution parity matrix."
+      ],
+      "original_acceptance_tests": [
+        "16-bit dark ramp preserves >256 levels before display conversion",
+        "Compare same 1200 draft/settled sources and native downsizing",
+        "RAW profile/WB/highlight changes invalidate source",
+        "Record true source depth/origin in diagnostics"
+      ],
+      "dependencies": [
+        "RC-05",
+        "RC-11"
+      ]
+    },
+    {
+      "id": "VE-02",
+      "title": "Make export-recipe support explicit and implement recipe output policy",
+      "priority": "P1",
+      "status": "partial",
+      "implemented": [
+        "Panel/export dialog now explicitly disclose fixed 16-bit sRGB TIFF/PNG output and unsupported recipe fields."
+      ],
+      "evidence_paths": [
+        "NativePanel/SpektraFilmTool.cs",
+        "NativePanel/SpatialPreview.cs",
+        "README.md"
+      ],
+      "remaining_work": [
+        "Implement recipe output profile/format/quality/naming policy; only size and crop are supported, not full recipe equivalence."
+      ],
+      "original_acceptance_tests": [
+        "Table-driven JPEG, PNG, TIFF 8/16-bit, unknown-format, custom ICC, image-folder/custom-folder/subfolder/token/suffix and duplicate-name cases.",
+        "Compare supported recipe result names, dimensions, DPI and profiles against independent native exports of disposable fixtures.",
+        "Assert unsupported recipe settings cannot reach a success state as if fully honored.",
+        "Use synthetic values differing by one 16-bit code to prove no 8-bit intermediate when choosing 16-bit output."
+      ],
+      "dependencies": [
+        "HS-11",
+        "RC-05",
+        "VE-01"
+      ]
+    },
+    {
+      "id": "VE-10",
+      "title": "Verify and unify display color management with native viewer and proofing",
+      "priority": "P1",
+      "status": "pending",
+      "implemented": [],
+      "evidence_paths": [],
+      "remaining_work": [
+        "Build disposable color patch scene and instrument host display/profile/proof state without changing calibration.",
+        "Determine whether the native paint context applies an ICC transform to overlays; compare raw numeric patch expectations and independent color-managed file viewer.",
+        "Route through verified host display transform if possible, otherwise maintain explicit monitor ICC output with per-monitor invalidation.",
+        "Separate film output encoding, export destination ICC and monitor display transform in types/UI; avoid double transforms.",
+        "Expose unsupported proof/HDR modes accurately until validated."
+      ],
+      "original_acceptance_tests": [
+        "sRGB, wide-gamut, nonstandard gamma display profiles; move between monitors at 100/150/200% scaling.",
+        "Compare native source toggle with equivalent standalone color-managed export; measured tolerances defined in linear/colorimetric domain.",
+        "Soft-proof with at least two destination profiles and proof off; overlay state must be explicit.",
+        "NaN/out-of-gamut patches and chromatic adaptation roundtrips."
+      ],
+      "dependencies": [
+        "HS-12",
+        "RC-05",
+        "VE-07"
+      ]
+    },
+    {
+      "id": "HS-10",
+      "title": "Per-image state and presets mix effect, performance and comparison preferences",
+      "priority": "P2",
+      "status": "implemented",
+      "implemented": [
+        "Viewer/drag quality and synthesis preference move to app preferences; comparison is transient and omitted from newly saved looks; legacy preference keys remain accepted."
+      ],
+      "evidence_paths": [
+        "NativePanel/PanelPreferences.cs",
+        "NativePanel/SpatialPreview.cs",
+        "qa/HostSmoke"
+      ],
+      "remaining_work": [
+        "Existing per-image hardware preferences are not automatically migrated into the global preference; add multi-image preset/preferences host regression."
+      ],
+      "original_acceptance_tests": [
+        "switch images, load preset, reset look, restart, import on lower-memory GPU",
+        "quality preferences stay stable and compare never quietly becomes a saved creative adjustment."
+      ],
+      "dependencies": [
+        "HS-11"
+      ]
+    },
+    {
+      "id": "HS-20",
+      "title": "Error/log behavior lacks actionable integration health",
+      "priority": "P2",
+      "status": "partial",
+      "implemented": [
+        "Persistent export-bridge and save/recovery messages make several failures visible without being overwritten by viewer status."
+      ],
+      "evidence_paths": [
+        "NativePanel/SpektraFilmTool.cs",
+        "NativePanel/SpatialPreview.cs",
+        "NativePanel/VariantLookStore.cs"
+      ],
+      "remaining_work": [
+        "Implement unified actionable integration health, retry/recovery controls, bounded structured logs and redacted diagnostics bundle."
+      ],
+      "original_acceptance_tests": [
+        "fault injection by capability, user can identify degraded feature without opening logs, export visibly reports whether it will contain Spektrafilm, persisted-save error remains prominent."
+      ],
+      "dependencies": [
+        "HS-12",
+        "HS-15"
+      ]
+    },
+    {
+      "id": "RC-07",
+      "title": "Generate canonical parameter capabilities and expose Hanatos2026 safely",
+      "priority": "P2",
+      "status": "pending",
+      "implemented": [],
+      "evidence_paths": [],
+      "remaining_work": [
+        "Consume audit parameter inventories as baseline not definitive UI coverage",
+        "Create versioned manifest with defaults, ranges, units, dependency groups, mode/backend/export support",
+        "Generate or validate C#/CLI mapping and migrations",
+        "Expose2026 opt-in while preserving prior saved looks/defaults",
+        "Gate APD on generated calibration capability; classify still omissions intentional"
+      ],
+      "original_acceptance_tests": [
+        "Mapping completeness and min/default/max round trip",
+        "Saved 2025 looks remain2025",
+        "Unknown fields/choices fail gracefully or migrate",
+        "Backend capabilities include data prerequisites",
+        "Input-space options only offered if host can produce encoding"
+      ],
+      "dependencies": [
+        "HS-11"
+      ]
+    },
+    {
+      "id": "RC-12",
+      "title": "Cache or GPU-accelerate enlarger resampling",
+      "priority": "P2",
+      "status": "pending",
+      "implemented": [],
+      "evidence_paths": [],
+      "remaining_work": [
+        "Baseline enlargement stage cost",
+        "First memoize CPU transformed source by source+geometry key or implement Vulkan resample pass",
+        "Keep immutable original GPU source and downstream transformed cache",
+        "Preserve exact placement/coordinates/black-border conventions"
+      ],
+      "original_acceptance_tests": [
+        "Existing reference_crop plus odd dimensions/outside-alpha/scale1/32x",
+        "Repeated print edits show zero transform/upload cost",
+        "Cached vs uncached numerical parity",
+        "Cancellation and memory-budget accounting"
+      ],
+      "dependencies": [
+        "RC-05",
+        "RC-11",
+        "RC-16"
+      ]
+    },
+    {
+      "id": "RC-13",
+      "title": "Reduce GPU readback and pipe copies with GPU display conversion",
+      "priority": "P2",
+      "status": "pending",
+      "implemented": [],
+      "evidence_paths": [],
+      "remaining_work": [
+        "Instrument copy stages",
+        "Fuse optional display transfer/strength/alpha and packed output in GPU final pass",
+        "Read back only display-required format; export retains float/high depth",
+        "Evaluate bounded shared-memory ring preserving crash isolation",
+        "Treat shared texture presentation as separate compatibility spike"
+      ],
+      "original_acceptance_tests": [
+        "Packed vs scalar reference exact or agreed1-code tolerance",
+        "All strengths/spaces/alpha",
+        "Worker/GPU loss and cancellation",
+        "No export precision change",
+        "Measured copy bytes and p95 benefit"
+      ],
+      "dependencies": [
+        "RC-05",
+        "RC-09",
+        "RC-10",
+        "RC-11",
+        "RC-16"
+      ]
+    },
+    {
+      "id": "VE-06",
+      "title": "Remove first-preview completion as a prerequisite for final-quality display",
+      "priority": "P2",
+      "status": "implemented",
+      "implemented": [
+        "Independent final development bypasses pending optional draft; ready-final short-circuit and cancellation retirement are source-linked tested."
+      ],
+      "evidence_paths": [
+        "NativePanel/RenderCoordination.cs",
+        "NativePanel/SpatialPreview.cs",
+        "tests/ViewerContracts/Program.cs"
+      ],
+      "remaining_work": [
+        "Complete live selection/disable ordering and first-visible versus settled latency measurement; synthetic scheduling tests do not prove host UI timing."
+      ],
+      "original_acceptance_tests": [
+        "Fake host source completes at 50ms while first optical draft stalls; final pipeline starts within bounded scheduling overhead.",
+        "Initial draft wins at 30ms, final at 300ms: show draft then final exactly once; late draft cannot replace final.",
+        "Switch image or disable during either task; no stale frame and both tasks become quiescent.",
+        "Record first-visible-frame and settled-frame latency separately."
+      ],
+      "dependencies": [
+        "VE-07"
+      ]
+    },
+    {
+      "id": "VE-09",
+      "title": "Budget image buffers and preview caches by bytes and lifetime",
+      "priority": "P2",
+      "status": "pending",
+      "implemented": [],
+      "evidence_paths": [],
+      "remaining_work": [
+        "Inventory buffer owners across C1 bitmap, managed frame, pipe payload, worker cache and Vulkan images; record bytes/lifetime in diagnostics.",
+        "Add a shared memory budget with headroom for Capture One; source cache by document/variant/revision/color space, display cache by transform/quality.",
+        "Use pooled buffers only with explicit immutable leases and release barriers; no buffer reuse while async renderer still reads it.",
+        "Evict source display/float result when equivalent packed display suffices, while retaining warm caches that measurably help.",
+        "Evaluate shared-memory frame transport and GPU-resident handles only after baseline accounting and crash cleanup ownership are proven.",
+        "Provide Adaptive resolution using viewport demand and measured memory instead of always developing native dimensions."
+      ],
+      "original_acceptance_tests": [
+        "Allocation traces for 24/45/61MP at strength 0,0.5,1 and repeated switches; bound retained memory after GC/worker idle.",
+        "Fake buffer leases verify no read-after-return during cancellation and output publication.",
+        "Process exit/crash releases shared memory or temp mappings if introduced.",
+        "Compare effective output accuracy and no long-lived giant allocations across 100 image changes."
+      ],
+      "dependencies": [
+        "RC-11",
+        "VE-07"
+      ]
+    },
+    {
+      "id": "VE-17",
+      "title": "Add structured stage telemetry and repeatable latency benchmarks",
+      "priority": "P2",
+      "status": "partial",
+      "implemented": [
+        "Versioned worker metrics and reproducible synthetic/host test entry points supply initial telemetry."
+      ],
+      "evidence_paths": [
+        "ofx-still-renderer/main.cpp",
+        "NativePanel/OpticalRenderer.cs",
+        "qa/HostSmoke",
+        "Test-Windows.ps1"
+      ],
+      "remaining_work": [
+        "No structured end-to-end event model, shared request identity, p50/p95 benchmark matrix or UI latency budget yet."
+      ],
+      "original_acceptance_tests": [
+        "Telemetry remains bounded during 10-minute rapid interaction and cannot block UI on disk or full diagnostics queue.",
+        "Trace validates each displayed frame links to exact variant/source/look revision and identifies discarded work.",
+        "Benchmark harness emits machine-readable JSON with commit, GPU/driver, source dimensions, settings hash and warm/cold state.",
+        "Compare median/p95, first-visible and settled latency, not only total batch runtime."
+      ],
+      "dependencies": [
+        "VE-07",
+        "VE-16"
+      ]
+    },
+    {
+      "id": "HS-16",
+      "title": "Polling repeats reflection and path work even at idle",
+      "priority": "P3",
+      "status": "pending",
+      "implemented": [],
+      "evidence_paths": [],
+      "remaining_work": [
+        "cache validated member access in host adapter",
+        "document lifecycle/selection events drive attach and synchronization",
+        "retain low-frequency defensive watchdog with adaptive backoff",
+        "cache path identity while invalidating on document change/rename, never skip catalog authorization. Separate pending persistence retry from full host discovery."
+      ],
+      "original_acceptance_tests": [
+        "measure idle UI thread cost/IO and zero-change work",
+        "network path timeout",
+        "document switch, form replacement, hidden palette, native workspace reset",
+        "event loss recovered by watchdog."
+      ],
+      "dependencies": [
+        "HS-15"
+      ]
+    },
+    {
+      "id": "VE-15",
+      "title": "Separate source development invalidation from presentation-only changes",
+      "priority": "P3",
+      "status": "pending",
+      "implemented": [],
+      "evidence_paths": [],
+      "remaining_work": [
+        "Instrument host counters and semantic settings changes for pan, zoom, crop, rotation, keystone, lens correction, native grain and exposure.",
+        "Build SourceKey from all and only source-affecting settings, with conservative fallback to existing counters for unknown fields.",
+        "Use PresentationKey for viewport clip/transform, DisplayKey for monitor/proof, FilmKey for optical parameters and EncodingKey for output.",
+        "Keep crop changes source-free only when full-canvas rendered pixels and spatial coordinate semantics truly remain identical.",
+        "Measure CPU/GPU savings for crop-heavy editing against exact pixel comparison."
+      ],
+      "original_acceptance_tests": [
+        "Mutation matrix of native tools; each change invalidates the right stages and never reuses stale source.",
+        "Pan/zoom changes do not spawn film processing unless ROI/adaptive-quality demand changes.",
+        "Crop/rotation/keystone correctness against fresh uncached render.",
+        "Unknown host property or version falls back to conservative invalidation."
+      ],
+      "dependencies": [
+        "VE-07",
+        "VE-16"
+      ]
+    },
+    {
+      "id": "HS-02",
+      "title": "Catalog identity and backups do not carry Spektrafilm edits",
+      "priority": "P1",
+      "status": "partial",
+      "implemented": [
+        "Launcher backups now include film-state archives and manifests alongside catalog snapshots."
+      ],
+      "evidence_paths": [
+        "Start-Spektrafilm.ps1",
+        "tests/installer/Test-CatalogBackup.ps1"
+      ],
+      "remaining_work": [
+        "Catalog state identity remains uppercase-path SHA; portable sidecar identity, move/clone migration, restore/import and conflict handling remain pending."
+      ],
+      "original_acceptance_tests": [
+        "original/moved/renamed/case-alias/copied/reverted catalog, two clones diverging, read-only directory, separate Windows account, missing sidecar, rollback. Verify edited source catalog never changes during copy migration."
+      ],
+      "dependencies": [
+        "HS-01"
+      ]
+    },
+    {
+      "id": "RC-06",
+      "title": "Gate unsupported Developer exhaustion and mode controls before rendering",
+      "priority": "P1",
+      "status": "partial",
+      "implemented": [
+        "Developer exhaustion is visibly unavailable with explicit reset and no silent artistic-value rewrite."
+      ],
+      "evidence_paths": [
+        "NativePanel/SpektraFilmTool.cs",
+        "NativePanel/SpatialPreview.cs"
+      ],
+      "remaining_work": [
+        "General mode/backend capability schema and every-control parameter sweep remain pending; scientific developer exhaustion is not implemented."
+      ],
+      "original_acceptance_tests": [
+        "Every visible slider min/default/max either renders or is disabled before action",
+        "Old presets with exhaustion restored without losing values or surprise render error",
+        "Negative processing cannot accept wrongly described source"
+      ],
+      "dependencies": [
+        "FIX-02",
+        "RC-07"
+      ]
+    },
+    {
+      "id": "VE-05",
+      "title": "Decouple accepted export jobs from the currently selected variant's enable switch",
+      "priority": "P1",
+      "status": "implemented",
+      "implemented": [
+        "Captured single-image export owns independent lifetime, settings and target identity; selection/master changes do not cancel it."
+      ],
+      "evidence_paths": [
+        "NativePanel/ExportOperation.cs",
+        "NativePanel/SpatialPreview.cs",
+        "tests/ViewerContracts/Program.cs"
+      ],
+      "remaining_work": [
+        "Add host selection/disable race and native-adjustment-after-acceptance tests; persistent batch jobs are not implemented."
+      ],
+      "original_acceptance_tests": [
+        "Start a delayed export for A; select enabled B, disabled C, clear selection, float/dock panel, switch tab; accepted A completes unless explicit cancel policy applies.",
+        "Change A's source adjustments before and during development; no mixed-revision output.",
+        "Close owning document while export waits: no use-after-free, clear cancellation and preserved existing destination.",
+        "Master switch on A versus switch on C cases have explicitly different scoped behavior."
+      ],
+      "dependencies": [
+        "FIX-03",
+        "VE-02"
+      ]
+    },
+    {
+      "id": "VE-14",
+      "title": "Harden source protection against directory aliases at final output commit",
+      "priority": "P1",
+      "status": "partial",
+      "implemented": [
+        "High-depth and preview output validate resolved final paths before work and again immediately before atomic commit."
+      ],
+      "evidence_paths": [
+        "NativePanel/OutputPathGuard.cs",
+        "NativePanel/SpektraExport.cs",
+        "NativePanel/SpatialPreview.cs",
+        "tests/ViewerContracts"
+      ],
+      "remaining_work": [
+        "Complete junction/symlink/hardlink/race matrix; symlink creation unavailable in this run. Handle-resolution check plus later rename is not a fully race-proof filesystem transaction."
+      ],
+      "original_acceptance_tests": [
+        "Direct same path, case variation, dot segments, source via junction, destination via junction, symlink file and ordinary separate hardlinks in isolated directory.",
+        "Cancellation/failure leaves source bytes and existing output intact; no test touches user photo files.",
+        "Concurrent destination creation/replacement before commit triggers chosen overwrite policy rather than silently bypassing original guard."
+      ],
+      "dependencies": [
+        "VE-02"
+      ]
+    },
+    {
+      "id": "HS-05",
+      "title": "Film edits are outside Capture One's undo/redo history",
+      "priority": "P2",
+      "status": "pending",
+      "implemented": [],
+      "evidence_paths": [],
+      "remaining_work": [
+        "state-command layer with before/after snapshots and gesture transaction IDs",
+        "prove safe native custom undo operation registration per host adapter, then register one transaction per drag or numeric commit and one per preset/reset/paste",
+        "retain every movement in durable journal while only coalescing user-visible undo steps. If host cannot accept external commands safely, implement clearly scoped local undo and shortcut handling only when panel owns focus",
+        "do not hijack host Ctrl+Z globally."
+      ],
+      "original_acceptance_tests": [
+        "mixed native/Spektrafilm histories, long drags, canceled gestures, selection change, redo after preset, restart recovery. Verify undo itself persists and re-renders exact target UUID."
+      ],
+      "dependencies": [
+        "HS-01",
+        "HS-12",
+        "HS-18"
+      ]
+    },
+    {
+      "id": "HS-09",
+      "title": "Presets do not represent the full saved look",
+      "priority": "P2",
+      "status": "partial",
+      "implemented": [
+        "Preset loading now validates complete known effect data before applying and excludes new hardware/comparison state."
+      ],
+      "evidence_paths": [
+        "NativePanel/SpektraFilmTool.cs",
+        "NativePanel/LookStateValidation.cs",
+        "NativePanel/SpatialPreview.cs"
+      ],
+      "remaining_work": [
+        "Define full named-section apply/reset schema, deliberate native-grain inclusion and one-operation undo; current preset does not represent all native host state."
+      ],
+      "original_acceptance_tests": [
+        "roundtrip all supported image-effect controls, old presets, absent optional sections, one-operation undo, no unintended host grain mutation."
+      ],
+      "dependencies": [
+        "HS-10",
+        "HS-11"
+      ]
+    },
+    {
+      "id": "HS-14",
+      "title": "Floating placement and section layout reset each launch",
+      "priority": "P2",
+      "status": "partial",
+      "implemented": [
+        "Floating bounds are persisted at close/dispose and restored with an offscreen fallback; quality preferences are independent of looks."
+      ],
+      "evidence_paths": [
+        "NativePanel/PanelPreferences.cs",
+        "NativePanel/SpektraFilmTool.cs"
+      ],
+      "remaining_work": [
+        "Sections property is not wired; expansion/scroll/dock-state, monitor identity, DPI migration and full visible-area clamping remain pending."
+      ],
+      "original_acceptance_tests": [
+        "100/150/200% DPI, two monitors then one, RDP reconnect, close/reopen, panel narrow/wide, keyboard traversal and modeless focus."
+      ],
+      "dependencies": [
+        "HS-10"
+      ]
+    },
+    {
+      "id": "RC-03",
+      "title": "Build colour-correct preview pyramids",
+      "priority": "P2",
+      "status": "partial",
+      "implemented": [
+        "Draft area filtering decodes/re-encodes the declared input transfer; Adobe near-black encode accuracy and signed range are tested."
+      ],
+      "evidence_paths": [
+        "NativePanel/ColorTransfer.cs",
+        "NativePanel/ViewerDraftSource.cs",
+        "tests/ViewerContracts"
+      ],
+      "remaining_work": [
+        "Full frame descriptor, bounded cached pyramid, nonconstant/alpha-ramp oracle and physical-effect resolution statistics remain pending."
+      ],
+      "original_acceptance_tests": [
+        "Black/white checker linear result .5 vs encoded .5 regression",
+        "Odd-size and fractional box centering",
+        "All input spaces and alpha ramps",
+        "Compare physical effect summary statistics across resolution"
+      ],
+      "dependencies": [
+        "RC-02",
+        "RC-05"
+      ]
+    },
+    {
+      "id": "RC-08",
+      "title": "Bake LUTs through the active Vulkan colour implementation",
+      "priority": "P2",
+      "status": "partial",
+      "implemented": [
+        "Normal LUT export uses active native Vulkan colour implementation, explicit sRGB domain/spatial exclusions and atomic output; 33/65 grids match direct native samples."
+      ],
+      "evidence_paths": [
+        "NativePanel/NativeLutExporter.cs",
+        "NativePanel/SpektraFilmTool.cs",
+        "tests/renderer"
+      ],
+      "remaining_work": [
+        "Add explicit UI cancellation, held-out interpolated colours, every-control/model sweep and documented legacy Python difference report."
+      ],
+      "original_acceptance_tests": [
+        "Grid ordering/endpoints/identity cube",
+        "Held-out colours vs direct same-graph rendering",
+        "Every nonspatial control and spectral model",
+        "Correct explicit exclusions for grain/diffusion/auto-exposure",
+        "Native/Python legacy difference report",
+        "Interrupted writes retain previous file"
+      ],
+      "dependencies": [
+        "RC-07",
+        "RC-09",
+        "RC-16"
+      ]
+    },
+    {
+      "id": "RC-14",
+      "title": "Cache pipeline milestones by parameter dependency graph",
+      "priority": "P2",
+      "status": "pending",
+      "implemented": [],
+      "evidence_paths": [],
+      "remaining_work": [
+        "Build source/film/density/print/scanner/display dependency keys from actual graph",
+        "Cache expensive milestones under memory admission",
+        "Cache metering per source/space/method",
+        "Invalidate by scientific asset/schema version",
+        "Expose cache hit/miss and stage-time diagnostics"
+      ],
+      "original_acceptance_tests": [
+        "Parameter mutation invalidation matrix",
+        "Cached vs clean image equality/tolerance for all effects",
+        "Long slider sweep memory bound",
+        "Stock/profile/space/source changes invalidate",
+        "Latency benchmark per stage"
+      ],
+      "dependencies": [
+        "RC-05",
+        "RC-07",
+        "RC-11",
+        "RC-16"
+      ]
+    },
+    {
+      "id": "RC-18",
+      "title": "Fingerprint renderer scientific assets and negotiate capabilities",
+      "priority": "P2",
+      "status": "partial",
+      "implemented": [
+        "Protocol verifies parameter-header SHA and float layout; build/package manifests fingerprint runtime files and launcher validates them; LUT embeds parameter contract."
+      ],
+      "evidence_paths": [
+        "NativePanel/OpticalRenderer.cs",
+        "ofx-still-renderer/CMakeLists.txt",
+        "ofx-still-renderer/main.cpp",
+        "ReleaseManifest.ps1",
+        "Build-Windows.ps1",
+        "Package-Windows.ps1"
+      ],
+      "remaining_work": [
+        "Finish fresh complete source-build provenance and tamper matrix; presets/metrics do not yet carry complete build identity; legacy developer layouts allow missing manifest."
+      ],
+      "original_acceptance_tests": [
+        "Deliberately outdated shader/curve/schema asset rejects clearly",
+        "Current ICC pins verify",
+        "Clean source inputs yield same manifest identity",
+        "Preset/render diagnostics include build identity"
+      ],
+      "dependencies": [
+        "RC-07",
+        "RC-10"
+      ]
+    },
+    {
+      "id": "RQ-07",
+      "title": "Confirm a usable integration after launch with capability diagnostics",
+      "priority": "P2",
+      "status": "partial",
+      "implemented": [
+        "Launcher CheckOnly/runtime manifest verification and explicit export-bridge warning improve launch diagnostics."
+      ],
+      "evidence_paths": [
+        "Start-Spektrafilm.ps1",
+        "NativePanel/StartupHook.cs",
+        "qa/HostSmoke"
+      ],
+      "remaining_work": [
+        "Production launcher does not wait for a typed end-to-end ready signal or expose full capability health. Opt-in disposable-host first/restart tests passed; this is not a universal launch-readiness handshake."
+      ],
+      "original_acceptance_tests": [
+        "Missing hook, slow catalog, unsupported host, renderer crash and missing Export binding produce distinct accurate states.",
+        "Ordinary native C1 launch does not report the tool as installed into plugin manager.",
+        "Restart/parallel stale status cannot show false readiness."
+      ],
+      "dependencies": [
+        "HS-12",
+        "HS-20",
+        "VE-01"
+      ]
+    },
+    {
+      "id": "RQ-09",
+      "title": "Establish an end-to-end performance and quality acceptance matrix",
+      "priority": "P2",
+      "status": "partial",
+      "implemented": [
+        "Tracked pure/GPU/host probes establish initial correctness evidence and retain explicit skipped prerequisites."
+      ],
+      "evidence_paths": [
+        "tests",
+        "ofx-still-renderer/smoke.py",
+        "qa/HostSmoke",
+        "Test-Windows.ps1"
+      ],
+      "remaining_work": [
+        "No complete end-to-end hardware/source-format performance and quality acceptance matrix or release budgets yet."
+      ],
+      "original_acceptance_tests": [
+        "Repeatable benchmark command produces machine-readable raw results and summary.",
+        "No threshold presented as an achieved speedup before measurement.",
+        "All performance candidates pass color, geometry, state and export correctness gates first."
+      ],
+      "dependencies": [
+        "VE-17",
+        "RC-16",
+        "RQ-02"
+      ]
+    },
+    {
+      "id": "VE-03",
+      "title": "Preserve export metadata, resolution and pixel orientation coherently",
+      "priority": "P2",
+      "status": "pending",
+      "implemented": [],
+      "evidence_paths": [],
+      "remaining_work": [
+        "Snapshot metadata from host-approved metadata APIs with explicit include/exclude policy matching recipe privacy choices.",
+        "Normalize orientation to already-rendered pixels and update pixel dimensions; do not copy stale raw thumbnails or raw orientation tags.",
+        "Pass recipe DPI/resolution unit through ExportPlan and final BitmapSource construction.",
+        "Write format-supported EXIF/IPTC/XMP including copyright and creator, with output software identifier and optional recipe provenance.",
+        "Validate exported metadata after reopening final temporary file before commit; disclose dropped unsupported fields instead of fabricating them."
+      ],
+      "original_acceptance_tests": [
+        "Synthetic EXIF/XMP/IPTC fixture: date, copyright, title, keywords, GPS opt-out, rotated source; compare expected tags after TIFF/PNG reopen.",
+        "Verify non-square DPI and 300-DPI recipes; PNG pHYs may quantize, assert documented tolerance.",
+        "Assert orientation is normal after transformed pixels and exported width/height tags match real image.",
+        "Retain exact 16-bit sample/ICC tests in viewer-probe."
+      ],
+      "dependencies": [
+        "VE-02"
+      ]
+    },
+    {
+      "id": "VE-04",
+      "title": "Replace fixed export limits with safe memory-aware rendering",
+      "priority": "P2",
+      "status": "pending",
+      "implemented": [],
+      "evidence_paths": [],
+      "remaining_work": [
+        "Keep current bounds until resource accounting exists; expose effective full-canvas dimensions and predicted memory in export preflight.",
+        "Measure peak resident CPU/GPU memory at multiple dimensions/effect combinations and derive safe bounded budgets.",
+        "Implement tile rendering only after characterizing global effects, random grain coordinates, filter halo and boundary conditions; otherwise use strip streaming of final encoding while retaining necessary full processing buffers.",
+        "Separate final crop from spatial neighborhood ROI; include exact halo/whole-image dependencies rather than cropping source blindly.",
+        "Permit larger images under measured budget or offer an explicit size reduction with predicted output dimensions, never silently downsample."
+      ],
+      "original_acceptance_tests": [
+        "Synthetic 30MP, 45MP, 61MP and >100MP preflight tests plus long-thin frames; allocate huge frames only on controlled memory fixtures.",
+        "Crop-at-edge, rotated canvas, optical blur and halation compare tiled/ROI results to whole-image golden outputs with seam checks.",
+        "Run export cancel/out-of-memory fault injection and verify original and existing destination preserved.",
+        "Show the same requested output dimensions in recipe UI, preflight and decoded file."
+      ],
+      "dependencies": [
+        "RC-11",
+        "VE-02",
+        "VE-09"
+      ]
+    },
+    {
+      "id": "VE-11",
+      "title": "Make native analysis tools describe the processed image",
+      "priority": "P2",
+      "status": "pending",
+      "implemented": [],
+      "evidence_paths": [],
+      "remaining_work": [
+        "Inventory native analytic consumers and determine from host hooks which operate on source, display bitmap, or overlay event.",
+        "Provide explicit processed-image analysis until reliable host integration is possible: film histogram, picked RGB with color-space label and highlight clipping overlay.",
+        "Prefer verified host service integration when it can be isolated behind adapter; avoid patching arbitrary memory or misleading native instruments.",
+        "Maintain native edit tools and masks visually on top of film image where possible; characterize event/paint ordering.",
+        "Clearly distinguish display-only features from true host-pipeline integration in capability report."
+      ],
+      "original_acceptance_tests": [
+        "Patch chart where film crushes whites or changes hue; compare visible result and processed histogram/picker values.",
+        "Native crop handles, mask brush, focus mask, exposure warnings and annotations remain usable or clearly unsupported.",
+        "Screenshot/order probe in disposable catalog after same event subscription sequence on supported builds."
+      ],
+      "dependencies": [
+        "HS-12",
+        "VE-10"
+      ]
+    },
+    {
+      "id": "VE-12",
+      "title": "Extend viewer attachment model to comparison and multiple images",
+      "priority": "P2",
+      "status": "pending",
+      "implemented": [],
+      "evidence_paths": [],
+      "remaining_work": [
+        "Add an attachment registry keyed by document, variant and view instance; distinguish selected variant from each viewed variant.",
+        "Discover layout/view replacements via events where available; refresh viewed list reference instead of assuming it is permanent.",
+        "Prioritize active view and visible previews under shared memory/GPU budget; do not render all gallery items at native size.",
+        "Define Before/After semantics explicitly: native pre-adjustments, Capture One-developed source before film, or original raw baseline are distinct.",
+        "Implement comparison and multi-view as separate capability-gated increments; preserve safe suspension until each mode is tested."
+      ],
+      "original_acceptance_tests": [
+        "Two/four view layouts, same variant in before/after halves, view virtualization and replacement, main/secondary display.",
+        "Changing selection must never paint A over B; stale callbacks after view Unloaded cannot draw.",
+        "DPI changes, layout resize, fullscreen transitions and tab switches retain correct transform and resource bounds."
+      ],
+      "dependencies": [
+        "HS-12",
+        "VE-07",
+        "VE-09",
+        "VE-16"
+      ]
+    },
+    {
+      "id": "RQ-03",
+      "title": "Package one verifiable build with source and resource provenance",
+      "priority": "P1",
+      "status": "partial",
+      "implemented": [
+        "Manifest-based build/package/installer checks reject runtime/hash/source mismatches and record source/dependencies; release validation fixtures exist."
+      ],
+      "evidence_paths": [
+        "ReleaseManifest.ps1",
+        "Build-Windows.ps1",
+        "Package-Windows.ps1",
+        "Install-Spektrafilm.ps1",
+        "tests/installer/Test-Manifest.ps1"
+      ],
+      "remaining_work": [
+        "Fresh complete build and artifact validation are still in progress; do not claim parent-generated build inputs establish same-tree provenance."
+      ],
+      "original_acceptance_tests": [
+        "Swap shader, table, stocks, helper or panel from another build and assert packaging/installation refuses.",
+        "Rebuild from documented inputs and compare generated profile/table hashes; record any nondeterministic binary fields.",
+        "Validate ZIP content allowlist, notices, SHA-256 and exact corresponding source link."
+      ],
+      "dependencies": [
+        "RC-18",
+        "RQ-01",
+        "RQ-02"
+      ]
+    },
+    {
+      "id": "RQ-04",
+      "title": "Back up and restore catalog and committed film state together",
+      "priority": "P1",
+      "status": "partial",
+      "implemented": [
+        "Closed-catalog backup now captures catalog and path-keyed film-state archives with hashes; refuses unsafe sidecars/open-file conditions."
+      ],
+      "evidence_paths": [
+        "Start-Spektrafilm.ps1",
+        "tests/installer/Test-CatalogBackup.ps1"
+      ],
+      "remaining_work": [
+        "Joint backup tests now pass17assertions including relative-path regression. Add SQLite integrity validation, portable identity/generation pairing, restore preview and crash/disk-full failure-safe rotation."
+      ],
+      "original_acceptance_tests": [
+        "Restore into a different directory and verify native and film state for multiple variants.",
+        "Crash during snapshot, disk-full, corrupt DB/state, old schema and duplicate-catalog identity do not delete last good backup.",
+        "Never read a live catalog as a standalone SQLite file ignoring WAL; test that open process/sidecar state rejects unsafe copy."
+      ],
+      "dependencies": [
+        "HS-02",
+        "RQ-02"
+      ]
+    },
+    {
+      "id": "HS-06",
+      "title": "Clone variant / copy adjustments / multi-selection omit the look",
+      "priority": "P2",
+      "status": "pending",
+      "implemented": [],
+      "evidence_paths": [],
+      "remaining_work": [
+        "adapter exposes primary + selected UUID set, clone lineage, adjustment copy/apply events if safely available",
+        "explicit selective Copy/Apply Spektrafilm commands initially",
+        "opt-in same native Edit All Selected policy after validation",
+        "snapshot target set before operation, transactionally journal each image, progress/cancellation with known partial completion",
+        "hook clone to copy source look only when lineage is certain. Never infer copy from adjacent timestamps alone."
+      ],
+      "original_acceptance_tests": [
+        "clone versus reset/new variant semantics, selection changes mid-operation, 1,000-image apply, differing enable flags, error/rollback, native copy excludes unchecked sections, undo consistency."
+      ],
+      "dependencies": [
+        "HS-02",
+        "HS-05"
+      ]
+    },
+    {
+      "id": "HS-07",
+      "title": "Native grain controls diverge from effective image state",
+      "priority": "P2",
+      "status": "pending",
+      "implemented": [],
+      "evidence_paths": [],
+      "remaining_work": [
+        "choose a clearly defined policy. Preferred: display native grain state from host model, make Apply visibly staged, show ownership/applied state and external-change conflict. If live native grain is desired, drive actual native commands during gestures with coalesced undo and durable ownership receipt. Do not auto-restore/erase user grain on master-off unless user explicitly enabled plugin-managed grain and current values still match the plugin's last owned state. Alternatively keep native grain outside the master effect and label that distinction concisely."
+      ],
+      "original_acceptance_tests": [
+        "native edits, Ctrl+Z, master on/off, apply/restore, clone, export and restart produce truthful controls. Verify changing Spektrafilm optics grain does not accidentally double native grain."
+      ],
+      "dependencies": [
+        "HS-05",
+        "HS-12"
+      ]
+    },
+    {
+      "id": "HS-13",
+      "title": "Temporary tab cannot be a fully native workspace tool",
+      "priority": "P2",
+      "status": "pending",
+      "implemented": [],
+      "evidence_paths": [],
+      "remaining_work": [
+        "feasibility spike for safe inspector-tool factory registration and native workspace serialization using stable namespaced ID",
+        "test add/remove/reorder/reset workspace and C1 launch without plugin. If unavailable, provide an application-owned placement preference and reuse designated custom tab without replacing user tools",
+        "preserve last active tab unless first-run user action",
+        "explicit diagnostic for slot exhaustion. Keep removal/backup safeguards until host can safely reopen missing custom tool."
+      ],
+      "original_acceptance_tests": [
+        "all slots used, custom tab reorder, user removes plugin tab, saved workspace reopen with and without launcher, one-instance guarantee, no duplicated tab on retry."
+      ],
+      "dependencies": [
+        "HS-12",
+        "HS-14"
+      ]
+    },
+    {
+      "id": "HS-17",
+      "title": "Unsupported control is presented as usable then fails rendering",
+      "priority": "P2",
+      "status": "partial",
+      "implemented": [
+        "The known unsupported developer-exhaustion control is disabled with retained legacy data and explicit clear action."
+      ],
+      "evidence_paths": [
+        "NativePanel/SpektraFilmTool.cs",
+        "NativePanel/SpatialPreview.cs"
+      ],
+      "remaining_work": [
+        "General manifest-driven runtime/mode support and complete enabled-control sweeps remain pending."
+      ],
+      "original_acceptance_tests": [
+        "every enabled control has a successful parameter sweep or explicitly supported validation outcome",
+        "unsupported settings cannot leave an apparently current stale preview. Track upstream implementation work separately from UI fix."
+      ],
+      "dependencies": [
+        "FIX-02",
+        "HS-11",
+        "RC-06"
+      ]
+    },
+    {
+      "id": "NI-01",
+      "title": "Add viewport-aware automatic quality with predictable manual overrides",
+      "priority": "P2",
+      "status": "pending",
+      "implemented": [],
+      "evidence_paths": [],
+      "remaining_work": [
+        "Implement Auto alongside existing manual settings; keep preference global/per-workspace, never a creative image parameter.",
+        "Choose intermediate display resolution from viewport physical pixels, zoom, measured recent latency and memory budget with hysteresis.",
+        "Keep final user-selected quality guarantee; display approximate status only while settling, retain source/variant generation identity.",
+        "Investigate visible 1:1 crop refinement using full-image coordinates and overlap halos; keep global metering and deterministic grain independent of tile order.",
+        "Use look-stage dependencies so strength/comparison or zoom does not re-develop unchanged RAW unnecessarily.",
+        "Offer simple Fast/Balanced/Quality presets backed by measured budgets, preserving explicit per-user overrides."
+      ],
+      "original_acceptance_tests": [
+        "Auto does not oscillate between sizes or overwrite manual selection; DPI/zoom/window moves adjust correctly.",
+        "Settled output and export match reference; ROI boundaries have no seams or changes in grain/halation scale.",
+        "P95 drag latency improves on measured hardware and memory stays bounded during rapid pan/zoom/selection."
+      ],
+      "dependencies": [
+        "HS-10",
+        "RC-02",
+        "RC-03",
+        "RC-11",
+        "RQ-09",
+        "VE-07",
+        "VE-09",
+        "VE-17"
+      ]
+    },
+    {
+      "id": "NI-02",
+      "title": "Finish native control interaction, discoverability and accessibility",
+      "priority": "P2",
+      "status": "pending",
+      "implemented": [],
+      "evidence_paths": [],
+      "remaining_work": [
+        "Document Capture One baseline semantics on a disposable catalog: double-click defaults, wheel/focus, keyboard arrows, fine adjustment, numeric commit/escape and multi-selection.",
+        "Use parameter manifest labels/units/tooltips/ranges and capability dependencies; preserve values when sections are unavailable without allowing invalid render commands.",
+        "Add explicit automation names, keyboard order/focus cues and locale-aware round-tripping.",
+        "Preserve floating panel DPI/theme/placement through HS-14; avoid width-dependent label truncation without accessible full labels.",
+        "Add stock search, favorites and recent presets using stable IDs; keep core controls visible and advanced groups discoverable.",
+        "Provide cached hold-to-compare as a separate display action, not a saved creative change or a reset of master enable."
+      ],
+      "original_acceptance_tests": [
+        "Keyboard and pointer edit/reset/cancel sequences produce identical persisted values and one intended undo gesture.",
+        "Comma/dot decimals, extreme values, NaN/Infinity, scaling 100/150/200% and narrow floating layouts behave deliberately.",
+        "Automation properties expose labels/value/default and screen-reader order; switching tabs never drops the viewer state."
+      ],
+      "dependencies": [
+        "HS-05",
+        "HS-10",
+        "HS-11",
+        "HS-14"
+      ]
+    },
+    {
+      "id": "VE-08",
+      "title": "Arbitrate live and export rendering instead of launching competing GPU jobs",
+      "priority": "P2",
+      "status": "partial",
+      "implemented": [
+        "Starting image export cancels pending previews, pauses refresh and separates export status; preview refresh resumes afterward."
+      ],
+      "evidence_paths": [
+        "NativePanel/SpatialPreview.cs",
+        "NativePanel/ExportOperation.cs"
+      ],
+      "remaining_work": [
+        "No global resource leases, GPU-memory admission or guaranteed worker quiescence before export; benchmark peak overlap and priorities."
+      ],
+      "original_acceptance_tests": [
+        "Instrument fake and real workers: maximum active high-cost jobs conforms to budget; warmup is lowest priority.",
+        "Export during drag, full processing and source development: no stale status or deadlock, bounded peak memory.",
+        "After export failure/cancel/completion, live preview resumes latest requested parameters without extra user input.",
+        "Compare p95 interactive latency and export throughput before/after; no unconditional claimed speedup."
+      ],
+      "dependencies": [
+        "VE-05",
+        "VE-07",
+        "VE-09"
+      ]
+    },
+    {
+      "id": "HS-08",
+      "title": "Restore native grain cannot survive restart",
+      "priority": "P2",
+      "status": "pending",
+      "implemented": [],
+      "evidence_paths": [],
+      "remaining_work": [
+        "persist before/last-applied values and host revision in effect state transaction with catalog/variant identity",
+        "restore only if native values still match last-applied receipt",
+        "never restore after unrelated native changes",
+        "clean receipts when variant deleted. Surface no-ownership vs mismatch distinctly."
+      ],
+      "original_acceptance_tests": [
+        "apply/relaunch/restore, native edits between sessions, partial apply failure, duplicate catalog identity, old v1 state lacking receipt."
+      ],
+      "dependencies": [
+        "HS-02",
+        "HS-07"
+      ]
+    },
+    {
+      "id": "HS-19",
+      "title": "Native grain partial updates are not rolled back on failure",
+      "priority": "P2",
+      "status": "partial",
+      "implemented": [
+        "Native grain validates property shapes, rolls back partial setter failures and verifies actual receipt after success/failure."
+      ],
+      "evidence_paths": [
+        "NativePanel/NativeGrain.cs",
+        "NativePanel/NativeAdjustmentTransaction.cs",
+        "tests/state/Program.cs",
+        ".test-results/host-final/host-smoke.log"
+      ],
+      "remaining_work": [
+        "Real host apply/restore succeeded, but injected host setter/EndScope failures and changed-selection races remain unverified; undo-scope semantics are not proven and receipts remain process-local."
+      ],
+      "original_acceptance_tests": [
+        "injected failure at each setter and EndScope",
+        "unchanged selection vs changed selection",
+        "verify catalog actual values and ownership receipt consistency."
+      ],
+      "dependencies": [
+        "HS-07"
+      ]
+    },
+    {
+      "id": "RQ-05",
+      "title": "Run safe public CI and gated host compatibility tests",
+      "priority": "P2",
+      "status": "partial",
+      "implemented": [
+        "Least-permission Windows public contract workflow and separate opt-in host/GPU paths are tracked."
+      ],
+      "evidence_paths": [
+        ".github/workflows/contracts.yml",
+        "Test-Windows.ps1",
+        "tests",
+        "qa/HostSmoke"
+      ],
+      "remaining_work": [
+        "Workflow has not been observed on GitHub; add manifest/schema release gates and exact host capability matrix; never run fork code automatically on privileged desktop runners."
+      ],
+      "original_acceptance_tests": [
+        "Fork PR can run pure tests without upstream write access or secrets.",
+        "GPU/host missing prerequisites are visible as not-run, not success.",
+        "Release job refuses known failing contracts and inconsistent manifest."
+      ],
+      "dependencies": [
+        "RQ-02",
+        "RQ-03",
+        "HS-12"
+      ]
+    },
+    {
+      "id": "RQ-06",
+      "title": "Make retained scientific Python setup reproducible and transactional",
+      "priority": "P2",
+      "status": "partial",
+      "implemented": [
+        "Normal user LUT export no longer requires the Python environment."
+      ],
+      "evidence_paths": [
+        "NativePanel/NativeLutExporter.cs",
+        "NativePanel/SpektraFilmTool.cs",
+        "README.md"
+      ],
+      "remaining_work": [
+        "Retained Python scientific setup still lacks exact dependency hash lock, transactional versioned environments and active-stock parity checks."
+      ],
+      "original_acceptance_tests": [
+        "Failed install leaves previous working environment selected.",
+        "Same lock produces equivalent stock transform on clean machines.",
+        "Missing binary wheel, offline setup and incompatible Python yield clear recovery without partial environment activation."
+      ],
+      "dependencies": [
+        "RC-08",
+        "RQ-03"
+      ]
+    },
+    {
+      "id": "RQ-08",
+      "title": "Generate truthful feature and compatibility documentation",
+      "priority": "P2",
+      "status": "partial",
+      "implemented": [
+        "README and UI now disclose export, precision, state, host and LUT constraints and tracked testing paths."
+      ],
+      "evidence_paths": [
+        "README.md",
+        "tests/renderer/README.md",
+        "NativePanel/SpektraFilmTool.cs"
+      ],
+      "remaining_work": [
+        "Generate capability/feature tables from schemas/manifests and verify documentation/release artifacts automatically; no16.7 support claim."
+      ],
+      "original_acceptance_tests": [
+        "Every visible enabled control has declared capability and a non-error execution test or is visibly unavailable.",
+        "No doc advertises 16.7 support solely because version guard was removed.",
+        "Links and release filenames match the published artifact/version metadata."
+      ],
+      "dependencies": [
+        "HS-11",
+        "HS-12",
+        "RC-07",
+        "RQ-03"
+      ]
+    },
+    {
+      "id": "VE-13",
+      "title": "Promote export cancellation, progress and completion into persistent jobs",
+      "priority": "P2",
+      "status": "partial",
+      "implemented": [
+        "Image export has dedicated visible cancel/status controls outside the enabled look-control subtree."
+      ],
+      "evidence_paths": [
+        "NativePanel/SpatialPreview.cs",
+        "NativePanel/ExportOperation.cs"
+      ],
+      "remaining_work": [
+        "No persistent staged job service, resumable descriptors, batch queue or truthful per-stage progress/nonmodal completion integration yet."
+      ],
+      "original_acceptance_tests": [
+        "Close dialog during each stage: documented continuation/cancellation and no dangling native command.",
+        "Cancel while encoding, disk full, permission denied, worker hang, invalid recipe: preserve preexisting files.",
+        "Batch extension: A/B different looks and disabled state, failure in middle, deterministic outputs and isolated cancellation.",
+        "No path/filename changes after job accepted except explicit collision resolution."
+      ],
+      "dependencies": [
+        "VE-02",
+        "VE-05",
+        "VE-08"
+      ]
+    },
+    {
+      "id": "NI-03",
+      "title": "Investigate sessions and multiple-document support through isolated adapters",
+      "priority": "P3",
+      "status": "pending",
+      "implemented": [],
+      "evidence_paths": [],
+      "remaining_work": [
+        "Create read-only capability probes for session/document identity, source lifecycle and selection on exact supported builds.",
+        "Define explicit user opt-in and backup policy per document type; preserve safe default isolation.",
+        "Move attachment/render/state ownership into a document registry with clean dispose/rebind and per-document keys.",
+        "Test tethered incoming files, multiple windows and switching document focus without state or output crossing boundaries.",
+        "Ship only document types with proven state recovery, export and teardown; expose unsupported modes clearly.",
+        "Record a no-go result if a host interface cannot meet lifetime/identity guarantees; no direct live catalog/session SQL patches."
+      ],
+      "original_acceptance_tests": [
+        "Two disposable documents with same filenames/variant-like identities never share state or viewer/export output.",
+        "Close/reopen/focus/tether arrival leaves no stale listeners or worker leaks.",
+        "Original single-catalog path remains safe and source files unmodified."
+      ],
+      "dependencies": [
+        "HS-02",
+        "HS-12",
+        "HS-15",
+        "VE-01",
+        "RQ-04"
+      ]
+    }
+  ],
+  "counts": {
+    "total": 70,
+    "implemented": 7,
+    "partial": 39,
+    "pending": 24
+  }
+}

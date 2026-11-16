@@ -2,7 +2,7 @@
 param(
     [string] $PythonPath,
     [string] $VulkanSdkPath = $env:VULKAN_SDK,
-    [string] $BuildDirectory = (Join-Path $PSScriptRoot 'build'),
+    [string] $BuildDirectory,
     [string] $CaptureOneDirectory = (Join-Path $env:ProgramFiles 'Capture One\Capture One'),
     [int] $Parallel = 2,
     [switch] $BuildPanel,
@@ -11,7 +11,16 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+if (!$BuildDirectory) { $BuildDirectory = Join-Path $PSScriptRoot 'build' }
+. (Join-Path $PSScriptRoot 'ReleaseManifest.ps1')
 if ($Parallel -lt 1) { throw 'Parallel must be at least one.' }
+$sourceIdentity = Get-ReleaseSourceIdentity $PSScriptRoot
+if ($StageRuntime) {
+    [IO.File]::WriteAllText((Join-Path $PSScriptRoot 'runtime-manifest.required'), 'This runtime requires a complete build-manifest.json.')
+}
+if ($StageRuntime -and (Test-Path -LiteralPath (Join-Path $PSScriptRoot 'build-manifest.json'))) {
+    Remove-Item -LiteralPath (Join-Path $PSScriptRoot 'build-manifest.json')
+}
 
 function Invoke-Checked([string] $Program, [string[]] $Arguments) {
     & $Program @Arguments
@@ -100,4 +109,13 @@ if ($BuildPanel) {
     } else {
         Write-Output $hook
     }
+}
+
+if ($StageRuntime -and $BuildPanel) {
+    $finishedSource = Get-ReleaseSourceIdentity $PSScriptRoot
+    if ($finishedSource.treeDigest -ne $sourceIdentity.treeDigest) { throw 'Source changed during the build. Rebuild once edits are complete before packaging.' }
+    $smoke = if ($SkipSmoke) { 'skipped' } else { 'passed' }
+    Write-ReleaseBuildManifest $PSScriptRoot $sourceIdentity $CaptureOneDirectory $smoke $PythonPath $VulkanSdkPath
+} elseif ($StageRuntime) {
+    Write-Warning 'Runtime was staged without a complete panel build. Run -BuildPanel -StageRuntime before packaging.'
 }

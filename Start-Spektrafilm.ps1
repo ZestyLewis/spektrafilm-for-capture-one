@@ -83,6 +83,57 @@ function Get-CatalogPath([string] $path) {
     return $item.FullName
 }
 
+function New-LookBackup([string] $path, [string] $archive) {
+    Add-Type -AssemblyName System.IO.Compression
+    $sha = [Security.Cryptography.SHA256]::Create()
+    try { $key = ([BitConverter]::ToString($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes([IO.Path]::GetFullPath($path).ToUpperInvariant())))).Replace('-', '') }
+    finally { $sha.Dispose() }
+    $records = New-Object 'System.Collections.Generic.List[object]'
+    $zipStream = [IO.File]::Open($archive, [IO.FileMode]::CreateNew, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
+    try {
+        $zip = New-Object IO.Compression.ZipArchive($zipStream, [IO.Compression.ZipArchiveMode]::Create, $true)
+        try {
+            foreach ($scope in @('Variant looks', 'Look recovery')) {
+                $root = Join-Path (Join-Path $userData $scope) $key
+                if (!(Test-Path -LiteralPath $root -PathType Container)) { continue }
+                $root = (Get-Item -LiteralPath $root -Force).FullName
+                $directories = New-Object 'System.Collections.Generic.Queue[string]'
+                $directories.Enqueue($root)
+                while ($directories.Count -gt 0) {
+                    $directory = Get-Item -LiteralPath $directories.Dequeue() -Force
+                    if ($directory.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw 'Saved-look backup cannot follow linked folders.' }
+                    foreach ($item in Get-ChildItem -LiteralPath $directory.FullName -Force | Sort-Object Name) {
+                        if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw 'Saved-look backup cannot follow linked files.' }
+                        if ($item.PSIsContainer) { $directories.Enqueue($item.FullName); continue }
+                        $relative = $scope + '/' + $item.FullName.Substring($root.Length + 1).Replace('\', '/')
+                        $input = [IO.File]::Open($item.FullName, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::None)
+                        try {
+                            $entry = $zip.CreateEntry($relative, [IO.Compression.CompressionLevel]::Optimal)
+                            $output = $entry.Open()
+                            try { $input.CopyTo($output) } finally { $output.Dispose() }
+                            $input.Position = 0
+                            $hash = [Security.Cryptography.SHA256]::Create()
+                            try { $digest = ([BitConverter]::ToString($hash.ComputeHash($input))).Replace('-', '').ToLowerInvariant() }
+                            finally { $hash.Dispose() }
+                            $records.Add([ordered]@{path=$relative;bytes=$input.Length;sha256=$digest})
+                        } finally { $input.Dispose() }
+                    }
+                }
+            }
+            $fingerprint = ($records.ToArray() | Sort-Object path | ForEach-Object { $_.path + ':' + $_.sha256 }) -join "`n"
+            $hash = [Security.Cryptography.SHA256]::Create()
+            try { $stateDigest = ([BitConverter]::ToString($hash.ComputeHash([Text.Encoding]::UTF8.GetBytes($fingerprint)))).Replace('-', '').ToLowerInvariant() }
+            finally { $hash.Dispose() }
+            $manifest = [ordered]@{schemaVersion=1;catalogKey=$key;stateDigest=$stateDigest;files=$records.ToArray()}
+            $entry = $zip.CreateEntry('manifest.json')
+            $writer = New-Object IO.StreamWriter($entry.Open(), (New-Object Text.UTF8Encoding($false)))
+            try { $writer.Write(($manifest | ConvertTo-Json -Depth 6)) } finally { $writer.Dispose() }
+        } finally { $zip.Dispose() }
+        $zipStream.Flush($true)
+    } finally { $zipStream.Dispose() }
+    return $manifest
+}
+
 function Save-CatalogBackup([string] $path) {
     Confirm-CatalogIsIdle $path
     $sha = [System.Security.Cryptography.SHA256]::Create()
@@ -95,6 +146,8 @@ function Save-CatalogBackup([string] $path) {
     $folder = Join-Path (Join-Path $userData 'Catalog backups') $key
     [System.IO.Directory]::CreateDirectory($folder) | Out-Null
     $tempPath = Join-Path $folder ([Guid]::NewGuid().ToString('N') + '.tmp')
+    $tempLooks = Join-Path $folder ([Guid]::NewGuid().ToString('N') + '.tmp')
+    $tempManifest = Join-Path $folder ([Guid]::NewGuid().ToString('N') + '.tmp')
     try {
         try {
             $inputDb = [IO.File]::Open($path, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::None)
@@ -117,21 +170,49 @@ function Save-CatalogBackup([string] $path) {
             $inputDb.Dispose()
         }
         $name = [IO.Path]::GetFileNameWithoutExtension($path)
+        $looks = New-LookBackup $path $tempLooks
+        Confirm-CatalogIsIdle $path
         $existing = @(Get-ChildItem -LiteralPath $folder -Filter '*.cocatalogdb' -File | Sort-Object LastWriteTimeUtc -Descending)
-        if ($existing.Count -gt 0 -and $existing[0].Length -eq (Get-Item -LiteralPath $tempPath).Length -and
+        $previousState = $null
+        if ($existing.Count -gt 0 -and (Test-Path -LiteralPath ($existing[0].FullName + '.manifest.json'))) {
+            try { $previousState = [IO.File]::ReadAllText($existing[0].FullName + '.manifest.json') | ConvertFrom-Json } catch { }
+        }
+        if ($existing.Count -gt 0 -and $previousState.stateDigest -eq $looks.stateDigest -and
+            (Test-Path -LiteralPath ($existing[0].FullName + '.spektrafilm.zip')) -and
+            (Get-FileHash -LiteralPath ($existing[0].FullName + '.spektrafilm.zip') -Algorithm SHA256).Hash -eq $previousState.looksSha256 -and
+            $existing[0].Length -eq (Get-Item -LiteralPath $tempPath).Length -and
             (Get-FileHash -LiteralPath $tempPath -Algorithm SHA256).Hash -eq (Get-FileHash -LiteralPath $existing[0].FullName -Algorithm SHA256).Hash) {
             return $existing[0].FullName
         }
         $time = [DateTime]::UtcNow.ToString('yyyyMMdd-HHmmss-fff', [Globalization.CultureInfo]::InvariantCulture)
         $destination = Join-Path $folder "$name-$time.cocatalogdb"
+        $joint = [ordered]@{schemaVersion=1;createdUtc=[DateTime]::UtcNow.ToString('o');catalogKey=$looks.catalogKey;
+            stateDigest=$looks.stateDigest;catalogSha256=(Get-FileHash -LiteralPath $tempPath -Algorithm SHA256).Hash.ToLowerInvariant();
+            looksSha256=(Get-FileHash -LiteralPath $tempLooks -Algorithm SHA256).Hash.ToLowerInvariant();files=$looks.files}
+        $manifestStream = [IO.File]::Open($tempManifest, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None)
+        try {
+            $bytes = [Text.Encoding]::UTF8.GetBytes(($joint | ConvertTo-Json -Depth 6))
+            $manifestStream.Write($bytes, 0, $bytes.Length)
+            $manifestStream.Flush($true)
+        } finally { $manifestStream.Dispose() }
+        [IO.File]::Move($tempLooks, $destination + '.spektrafilm.zip')
+        [IO.File]::Move($tempManifest, $destination + '.manifest.json')
         [IO.File]::Move($tempPath, $destination)
         foreach ($older in @($existing | Select-Object -Skip 4)) {
-            try { Remove-Item -LiteralPath $older.FullName -ErrorAction Stop }
+            try {
+                Remove-Item -LiteralPath $older.FullName -ErrorAction Stop
+                foreach ($suffix in @('.spektrafilm.zip','.manifest.json')) {
+                    $companion = $older.FullName + $suffix
+                    if (Test-Path -LiteralPath $companion) { Remove-Item -LiteralPath $companion -ErrorAction Stop }
+                }
+            }
             catch { Write-Warning "Could not remove an older backup at $($older.FullName)." }
         }
         return $destination
     } finally {
         if (Test-Path -LiteralPath $tempPath) { Remove-Item -LiteralPath $tempPath }
+        if (Test-Path -LiteralPath $tempLooks) { Remove-Item -LiteralPath $tempLooks }
+        if (Test-Path -LiteralPath $tempManifest) { Remove-Item -LiteralPath $tempManifest }
     }
 }
 
@@ -145,7 +226,11 @@ function Confirm-VulkanRenderer([string] $renderer) {
     $start.RedirectStandardInput = $true
     $start.RedirectStandardOutput = $true
     $start.RedirectStandardError = $true
-    [void] $start.EnvironmentVariables.Remove('DOTNET_STARTUP_HOOKS')
+    foreach ($name in @($start.EnvironmentVariables.Keys)) {
+        if ($name -like 'SPEKTRAFILM_*' -or $name -eq 'DOTNET_STARTUP_HOOKS') {
+            [void] $start.EnvironmentVariables.Remove($name)
+        }
+    }
     $process = [Diagnostics.Process]::Start($start)
     try {
         $output = New-Object IO.MemoryStream
@@ -177,10 +262,24 @@ function Confirm-VulkanRenderer([string] $renderer) {
 
 try {
     if (![Environment]::Is64BitOperatingSystem) { throw "$appName requires 64-bit Windows." }
+    if ((Test-Path -LiteralPath (Join-Path $PSScriptRoot 'runtime-manifest.required')) -and
+        !(Test-Path -LiteralPath (Join-Path $PSScriptRoot 'build-manifest.json'))) {
+        throw 'The staged runtime is incomplete. Rebuild or extract the complete release before launching.'
+    }
+    if (Test-Path -LiteralPath (Join-Path $PSScriptRoot 'build-manifest.json')) {
+        . (Join-Path $PSScriptRoot 'ReleaseManifest.ps1')
+        $buildManifest = Test-ReleaseManifest $PSScriptRoot
+    }
     $app = Get-CaptureOneExecutable
     if (!$app) { return }
     if ([IO.Path]::GetFileName($app) -ine 'CaptureOne.exe') { throw 'Select CaptureOne.exe from the Capture One installation.' }
     $appDirectory = Split-Path -LiteralPath $app
+    if ($buildManifest) {
+        foreach ($dependency in $buildManifest.host.files) {
+            $actual = Get-ReleaseFileRecord $appDirectory $dependency.path
+            if ($actual.sha256 -ne $dependency.sha256) { throw "The panel was built against different Capture One components ($($dependency.path)). Rebuild against this supported installation." }
+        }
+    }
     $appAssembly = Join-Path $appDirectory 'CaptureOne.dll'
     if (!(Test-Path -LiteralPath $appAssembly -PathType Leaf) -or
         (Get-FileHash -LiteralPath $appAssembly -Algorithm SHA256).Hash -ne $assemblyHash -or
@@ -205,8 +304,8 @@ try {
     if ($CheckOnly) {
         Confirm-VulkanRenderer $renderer
         Write-Output "Capture One $appVersion matches the supported build. Release files and Vulkan render passed."
-        if ($python) { Write-Output "Optional LUT Python found at $python" }
-        else { Write-Output 'Optional LUT Python is not installed.' }
+        if ($python) { Write-Output "Optional reference/developer Python found at $python" }
+        else { Write-Output 'Optional reference/developer Python is not installed; panel and LUT use do not require it.' }
         return
     }
 
@@ -223,7 +322,7 @@ try {
     $start.UseShellExecute = $false
     $start.WorkingDirectory = $appDirectory
     foreach ($name in @($start.EnvironmentVariables.Keys)) {
-        if ($name -like 'SPEKTRAFILM_VERIFY_*' -or $name -like 'SPEKTRAFILM_TEST_*') {
+        if ($name -like 'SPEKTRAFILM_*' -or $name -eq 'DOTNET_STARTUP_HOOKS') {
             [void] $start.EnvironmentVariables.Remove($name)
         }
     }

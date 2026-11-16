@@ -2,11 +2,24 @@
 param(
     [Parameter(Mandatory)]
     [ValidatePattern('^\d+\.\d+\.\d+([.-][a-zA-Z0-9.]+)?$')]
-    [string] $Version
+    [string] $Version,
+    [switch] $Development
 )
 
 $ErrorActionPreference = 'Stop'
 $root = $PSScriptRoot
+. (Join-Path $root 'ReleaseManifest.ps1')
+$build = Test-ReleaseManifest $root
+$sourceIdentity = Get-ReleaseSourceIdentity $root
+if ($sourceIdentity.treeDigest -ne $build.source.treeDigest -or $sourceIdentity.commit -ne $build.source.commit) {
+    throw 'Source no longer matches staged runtime. Run Build-Windows.ps1 -BuildPanel -StageRuntime again.'
+}
+if (!$Development) {
+    if ($sourceIdentity.dirty -or $build.source.dirty) { throw 'Release packaging requires committed clean source. Use -Development for an explicitly uncommitted test package.' }
+    if ($build.validation.rendererSmoke -ne 'passed' -or $build.validation.panelBuild -ne 'passed') { throw 'Release packaging requires a successful renderer smoke test and panel build.' }
+    $tag = & git -C $root rev-parse --verify "refs/tags/v$Version^{commit}" 2>$null
+    if ($LASTEXITCODE -ne 0 -or $tag -ne $sourceIdentity.commit) { throw "Tag v$Version must identify the exact tested source commit before release packaging." }
+}
 $dist = Join-Path $root 'dist'
 $archiveName = "Spektrafilm-for-Capture-One-v$Version-windows-x64.zip"
 $archive = Join-Path $dist $archiveName
@@ -14,6 +27,7 @@ $stage = Join-Path $dist ('stage-' + [Guid]::NewGuid().ToString('N'))
 $package = Join-Path $stage 'Spektrafilm for Capture One'
 $files = @(
     'Install Spektrafilm for Capture One.cmd', 'Install-Spektrafilm.ps1',
+    'ReleaseManifest.ps1', 'build-manifest.json', 'runtime-manifest.required',
     'Start Spektrafilm for Capture One.cmd', 'Start-Spektrafilm.ps1',
     'Setup LUT Export.cmd', 'Setup-LutExport.ps1', 'lut_worker.py', 'requirements-lut.txt',
     'README.md', 'LICENSE', 'THIRD-PARTY.md', 'UPSTREAM-CHANGES.md', 'stocks.json',
@@ -43,12 +57,21 @@ try {
         [void] [IO.Directory]::CreateDirectory((Split-Path -Parent $destination))
         [IO.File]::Copy($source.FullName, $destination)
     }
-    $sourceUrl = "https://github.com/nothing-complex/spektrafilm-for-capture-one/tree/v$Version"
+    $sourceRef = if ($Development) { $sourceIdentity.commit } else { "v$Version" }
+    $sourceUrl = "https://github.com/nothing-complex/spektrafilm-for-capture-one/tree/$sourceRef"
     @(
         "Spektrafilm for Capture One v$Version"
+        $(if ($Development) { 'Development package; uncommitted changes may be present. See build-manifest.json.' } else { 'Verified source release.' })
         "Corresponding source and build instructions"
         $sourceUrl
     ) | Set-Content -LiteralPath (Join-Path $package 'SOURCE.txt') -Encoding ascii
+    $packageManifest = [ordered]@{
+        schemaVersion=1; kind='package'; version=$Version; development=[bool]$Development
+        source=$sourceIdentity; rendererProtocol=$build.rendererProtocol; parameterContract=$build.parameterContract
+        files=@(($files + 'SOURCE.txt') | Sort-Object -Unique | ForEach-Object { Get-ReleaseFileRecord $package $_ })
+    }
+    [IO.File]::WriteAllText((Join-Path $package 'package-manifest.json'),($packageManifest | ConvertTo-Json -Depth 8),(New-Object Text.UTF8Encoding($false)))
+    [void](Test-ReleaseManifest $package 'package-manifest.json')
     $temporaryArchive = Join-Path $stage $archiveName
     Compress-Archive -LiteralPath $package -DestinationPath $temporaryArchive -CompressionLevel Optimal
     Move-Item -LiteralPath $temporaryArchive -Destination $archive -Force
