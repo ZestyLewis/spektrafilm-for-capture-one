@@ -72,6 +72,10 @@ Building requires Windows x64, Visual Studio 2022 with Desktop development with 
 
 Use `-VulkanSdkPath` to specify a Vulkan SDK location or `-CaptureOneDirectory` for a custom Capture One installation. The build runs the renderer smoke test by default. Packaging writes the archive and SHA-256 checksum to `dist`. See the [upstream build and changes](UPSTREAM-CHANGES.md) and [third-party notices](THIRD-PARTY.md).
 
+## Contribute a compatibility fix
+
+Changes for newer Capture One builds can be submitted from a fork. Push your fix to your fork, then open a pull request against `experimental/unchecked-capture-one`. [Fork and pull request instructions](https://github.com/nothing-complex/spektrafilm-for-capture-one/tree/experimental/unchecked-capture-one#contribute-a-compatibility-fix)
+
 ## Support development
 
 - Capture One integration — [Luka Kauzlaric on Ko-fi](https://ko-fi.com/lukakauzlaric)
