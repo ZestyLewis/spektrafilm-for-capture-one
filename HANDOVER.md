@@ -1,0 +1,153 @@
+# Spektrafilm for Capture One development handover
+
+Updated 2026-11-16. The critical-fix batch is implemented, tested, installed locally and published in a draft pull request. The full 70-item integration audit is **not complete**: 7 bounded primary fixes are implemented, 39 items are partial and 24 are pending. Some items are feasibility investigations or enhancements, not proven defects.
+
+## Resume here
+
+1. Read this file, `AGENTS.md` and `qa/AUDIT-FIX-STATUS.json` before changing code. The JSON is the authoritative task-progress ledger; its `remaining_work` and original acceptance tests matter more than a short status label.
+2. Check `git status`, current branch and PR head. Do not discard existing edits or switch the installed build merely because this documentation has a newer commit.
+3. The installed and packaged **runtime revision is `ffc481988eb2e6e7ef7a1379486c4a8b2656ac81`**. Later documentation commits do not imply a newer installed runtime. The product changes are in `285f0aa`; `ffc4819` changes only the test runner and its environment regression.
+4. Choose an unresolved task and an exact ownership boundary. Do not repeat the completed installation, crash test or old defect reproductions as if nothing had happened.
+5. Update task evidence and the delivery ledger at each completed milestone. Never mark a broad parent task complete because one mitigation shipped.
+
+Inside the standalone audit archive, use `CURRENT-IMPLEMENTATION.json`; repository-only `AGENTS.md` and `qa/` paths refer to the linked source checkout. The archive contains a copy of this handover, not the product or local test artifacts.
+
+## Locations and revision identities
+
+| Item | Value |
+| --- | --- |
+| Active worktree | `D:\Library AI testing\SpektraFilm Capture One\Film-Tools-Audit-Fixes` |
+| Branch | `audit/fixes-2026-11-16` |
+| Remote | `https://github.com/nothing-complex/spektrafilm-for-capture-one.git` |
+| Public review | [PR 1](https://github.com/nothing-complex/spektrafilm-for-capture-one/pull/1), draft, open, unmerged when checked |
+| Original main baseline | `d56ebefe023cd32ca6bf3a129ae7add02ff0b6b4` |
+| Original checkout | `D:\Library AI testing\SpektraFilm Capture One\Film-Tools-Release`; main was not merged or replaced |
+| Experimental checkout | `D:\Library AI testing\SpektraFilm Capture One\Film-Tools-Experimental`, inspected at `2576830a387243603dfc90e5ec40f350c5db04b8`; removing a version gate does not establish 16.7 compatibility |
+| Original audit and detailed plan | `D:\Library AI testing\SpektraFilm Capture One\Audit-2026-11-16` |
+| Installed application | `C:\Users\luka\AppData\Local\Programs\Film Tools for Capture One` — legacy folder name is intentional; product branding is Spektrafilm for Capture One |
+| Desktop shortcut | `C:\Users\luka\Desktop\Spektrafilm for Capture One.lnk` |
+| Saved user state | `%LOCALAPPDATA%\FilmToolsForCaptureOne` |
+| Supported host | Windows Capture One `16.4.6.2414`, installed under `C:\Program Files\Capture One\Capture One` |
+
+Supported `CaptureOne.dll` SHA-256: `4E17B2AB68CB60CCE18BB92CF0C829A93A62024B15354136FD30A3F9EED2E342`. Retain the exact gate until another installed host passes an explicit compatibility matrix. This run did not establish 16.7 support.
+
+## Completed delivery ledger
+
+- [x] Created isolated audit worktree and source backup before implementation.
+- [x] Implemented saved-look validation, preservation of unreadable/future data, explicit recovery, durable fallback checkpoints, compact saves and verified no-op elimination. Saving still occurs on every movement; this is not debounce-only autosave.
+- [x] Prevented nested custom-file loss on upgrades; added collision recovery, verified rollback fixtures and joint catalog/look backup generations.
+- [x] Isolated renderer experiment environment flags; added protocol negotiation, parameter fingerprints, malformed-response recovery and native-engine LUT export.
+- [x] Kept all settled preview resolutions on native high-depth source development; corrected draft resampling to linear light and stopped unfinished provisional work from holding up ready final development.
+- [x] Separated accepted image export cancellation from selecting a disabled look, added an explicit cancel control, surfaced native Export hook failure and guarded original output paths.
+- [x] Added native grain partial-setter rollback and verified normal apply/restore in the real host.
+- [x] Added global preview preferences and remembered floating bounds. Section expansion and docking state are still unfinished.
+- [x] Ran local managed, installer, backup, GPU and live-host checks with their scope recorded below.
+- [x] Fixed PowerShell 7 to Windows PowerShell 5.1 child-module-path contamination discovered on GitHub; added six regression assertions and observed green CI.
+- [x] Built a clean development package, verified extracted files and renderer, backed up the installed application/user state/shortcut, installed it and verified it in a fresh PowerShell process.
+- [x] Confirmed all six pre-update user-data files were unchanged and the source test catalog's hash was unchanged.
+- [x] Published source in draft PR 1. No main-branch merge or public GitHub Release was performed.
+
+These completed milestones do not close every acceptance condition of the corresponding 70 audit tasks.
+
+## Backups and the tested package
+
+Original source backup: `..\Audit-2026-11-16\source-before-fixes-d56ebef.zip`.
+
+Verified pre-install backup: `.test-results\installed-before-audit-20261116`. It contains `Installed application`, `User data`, the original desktop shortcut, `application-hashes.json` and `installed-check-passed.txt`. The original installation had 145 files, approximately 33.6 MB. Keep this backup; do not replace it with a copy of the newer audit build. Saved user state was verified unchanged after both installation passes.
+
+Application rollback and saved-state restoration are separate decisions. Restoring the old `User data` folder later would overwrite edits made since this backup; do not do so as an automatic application rollback step.
+
+Package: `dist\Spektrafilm-for-Capture-One-v0.2.0-audit.1-windows-x64.zip`.
+
+- SHA-256: `52ea6f71a6ffa60d9342406f1cfa05df7ac0abbce7357db96b9ae8db8a1bf299`.
+- Source commit: `ffc481988eb2e6e7ef7a1379486c4a8b2656ac81`, clean when built.
+- Source digest: `cc91c4c6ad494db981ef1a8ff112f1b7167e5884993a494163071ed13803f37b`.
+- Verified 146 packaged files and 17 runtime components, supported host fingerprints and Vulkan pixel processing.
+- Extracted installer: `.test-results\final-package-271dea93cb444e67b18043c87781bdec\Spektrafilm for Capture One`.
+
+This is a development package, not a tagged public release. Documentation updates after the runtime commit intentionally do not regenerate or reinstall it. `Package-Windows.ps1` rejects a source tree that differs from the staged manifest; rebuild/stage from a clean intended revision before producing a new package. Never hand-edit a manifest to bypass that check.
+
+## Validation and limits of the evidence
+
+| Tier | Observed result | Evidence |
+| --- | --- | --- |
+| Managed renderer client | 81 assertions | `.test-results/ci-pwsh-fix/RendererContracts.log` |
+| State and recovery | 133 assertions, including separate-process fallback recovery and injected write/rollback failures | `.test-results/ci-pwsh-fix/StateContracts.log` |
+| Viewer, colour and encoder contracts | 9,789 local assertions; 9,790 on CI where the symbolic-link fixture could run | `.test-results/ci-pwsh-fix/ViewerContracts.log` |
+| Test-child environment | 6 assertions; parent environment unchanged | `.test-results/ci-pwsh-fix/runner-environment.log` |
+| Manifest / backup / installer | 9 / 17 / 26 assertions | `.test-results/ci-pwsh-fix/summary.json` |
+| Real GPU contracts | 9 checks; sampled 33/65-point LUT error at most about `5.0e-10` | `tests/renderer/README.md`, renderer test artifacts |
+| Fresh full build and smoke | Panel zero warnings/errors; persistent protocol, encoding and effect checks passed | `.test-results/final-build.log` |
+| Live Capture One | 17 first-process plus 19 restart assertions | `.test-results/host-final/host-smoke.log`, `first.passed`, `restart.passed`, `panel.log` |
+| Extracted and installed package | Both `-CheckOnly` checks passed | `.test-results/final-package-check.json`, installation backup's `installed-check-passed.txt` |
+| GitHub CI for runtime revision | Success, run `43916882324` | [Windows contracts](https://github.com/nothing-complex/spektrafilm-for-capture-one/actions/runs/43916882324) |
+
+The CI total is 10,062 assertions, not 10,062 distinct end-to-end scenarios. The local symbolic-link fixture skipped unavailable privilege. GPU tests and licensed-host tests are separate from the public CI job.
+
+`.test-results`, `build`, `dist` and the installation backup are ignored local artifacts, not files shipped in the GitHub source checkout. Their paths in this handover are relative to the active worktree above. A remote agent can reproduce the public tests but must not assume access to Luka's logs, installed host, images or backups.
+
+Live-host scope: the tool and native Export binding attached; tested slider movements persisted; legacy preview preference keys were accepted; the second process restored exposure 1.2 and a disabled master without losing the tool. Capture One logged a native 6000 × 4000 DNG source at 16 bits, and explicit 720/1200 scaled source checks passed. The GPU-to-TIFF assertion used the **1200 px scaled frame**, float32 processing and RGB48 output with expected dimensions. It did **not** exercise a full 24 MP GPU export, `ExportAsync` through the native dialog, every recipe, export during image navigation, all cameras/profiles, power-loss durability or visual proofing parity. Native grain normal apply/restore passed; actual host setter-failure injection remains open.
+
+The host tests ran against product commit `285f0aa`; the later runtime package commit changes only the CI test runner. The final package and installed runtime were checked again. The current initial draft also uses original high-depth development (`RenderDraft` / `RenderPurpose.Draft`), not the old 8-bit proxy route.
+
+## Runtime map for the next agent
+
+| Responsibility | Main files and contracts |
+| --- | --- |
+| Startup, catalog opt-in, native tab and Export binding | `Start-Spektrafilm.ps1`, `ApprovedCatalog.cs`, `StartupHook.cs`, `HostProfile.cs`, `ExportHook.cs`. Exact host gate; one approved catalog; attach warning persists if Export binding fails. |
+| Native panel and saved controls | `SpektraFilmTool.cs`, `NativeSlider.cs`, `LookSettings.cs`, `LookStateValidation.cs`. Native sliders/reset behavior, enable switch, presets, recovery, floating native window. |
+| Per-variant persistence | `VariantLookStore.cs`, `PanelFiles.cs`. Absolute catalog-path hash plus variant ID; primary state, shared pending session state and alternate `Look recovery` checkpoints. Unknown/corrupt/future state blocks writes until explicit recovery. Both storage paths failing cannot be made crash-safe; UI says the latest edit is not safely saved. |
+| Machine preferences | `PanelPreferences.cs`. Viewer/drag quality, draft synthesis and floating rectangle are separate from creative looks; compare-source is transient. Sections field is not wired. |
+| Host pixels and geometry | `HostImageSource.cs`, `ViewerGeometry.cs`, `ViewerPreview.cs`. Capture One RAW development and native settings, 16-bit source to float, viewer overlay follows native geometry. This is developed bounded data, not proven pre-tone-map scene-linear RAW. |
+| Preview scheduling and colour | `SpatialPreview.cs`, `ViewerDraftSource.cs`, `ColorTransfer.cs`, `RenderCoordination.cs`. Source/render identities, original-depth settled routes, linear-light downsampling, draft cancellation/final priority. No global memory admission or cooperative GPU kernel cancellation yet. |
+| Worker and LUT | `OpticalRenderer.cs`, `WorkerEnvironment.cs`, `NativeLutExporter.cs`, `ofx-still-renderer/main.cpp`. Protocol 1 `HELLO` / `METRICS`, parameter SHA and layout validation. Worker child strips inherited `SPEKTRAFILM_*` and startup hooks. LUT uses the same Vulkan colour engine with explicit spatial exclusions. |
+| Image output | `ExportOperation.cs`, `SpektraExport.cs`, `OutputPathGuard.cs`. Captured job ownership, explicit cancel, atomic commit, original-path checks, 16-bit sRGB TIFF/PNG. Recipe integration remains limited. |
+| Native grain | `NativeGrain.cs`, `NativeAdjustmentTransaction.cs`. Undo-grouped setter sequence and rollback with aggregated errors. Restore receipts remain process-local. |
+| Build, installation and evidence | `ReleaseManifest.ps1`, `Build-Windows.ps1`, `Package-Windows.ps1`, `Install-Spektrafilm.ps1`, `Test-Windows.ps1`, `tests/`, `qa/HostSmoke/`. Manifested builds, preserved custom files, regression fixtures and explicit hardware/host test tiers. |
+
+## Next work and known constraints
+
+Consult the detailed JSON before implementation. Useful next bounded packets are:
+
+1. Finish host fault/race coverage for `FIX-01`, `FIX-03`, `HS-03`, `HS-04`, `HS-19`, `VE-01`, `VE-05`, `HS-15`: failed binding rollback, selection/export races, teardown callbacks and real host failure semantics. Do not reimplement the safeguards already present.
+2. Agree model/parameter/capability contracts (`HS-18`, `HS-11`, `HS-12`, `RC-07`) before native undo, copy/apply/clone (`HS-05`, `HS-06`) or broader host compatibility. One owner should edit each shared UI/scheduler region.
+3. Complete export policy (`VE-02`, `VE-03`): ICC/profile intent, metadata, DPI, naming, crop/orientation and explicit unsupported recipes. Current output is 16-bit sRGB TIFF/PNG; output DPI remains 96. Native-dialog interaction still needs verification.
+4. Add measured resource admission and generation-aware scheduling (`RC-11`, `VE-09`, `VE-07`, `VE-08`, `VE-17`, `RQ-09`) before increasing output limits. Current export cap is 32 MP / 8192 px per side; native viewer cap is 100 MP / 16384 px; synthesis has its own 32 MP constraints.
+5. Solve portable catalog identity/restore (`HS-02`, `RQ-04`) and native grain restore ownership across restarts (`HS-08`). Joint backup exists; moving a catalog still changes its path-based state key.
+6. Treat histogram/proofing/native pixel hooks (`VE-10`, `VE-11`), multi-view and sessions as exact-build feasibility work. An overlay does not prove native analysis tools describe the processed image.
+
+Other open work includes full floating/section/workspace persistence, complete presets, native-grain control/model alignment, blur-scale behavior, global LUT/job progress, viewport-aware quality, cache/GPU-copy optimizations and broad camera/GPU performance matrices. Public source lacks licensed SMPTE printer-density tables, so the corresponding printer-density mode remains unavailable. Do not enable unsupported controls or claim measured speedups from code inspection.
+
+## Commands and operating constraints
+
+Use PowerShell in the active worktree. Prefer code, APIs and command-line fixtures; the user wants computer use only when strictly necessary. Do not write into a live user catalog. Back up before any fundamental installed/state change. Do not send messages to third parties without user authorization. Retain upstream attribution, the user's product name, personal website, Lensflare plug and donation links.
+
+```powershell
+git status --short
+dotnet build NativePanel/NativePanel.csproj -c Release -p:TargetPlatformDisplayName=Windows
+./Test-Windows.ps1 -ResultsDirectory .test-results/next-contracts
+dotnet run --project tests/renderer/RendererContracts.csproj -c Release -- --gpu .
+python ofx-still-renderer/smoke.py --exe renderer/SpektraStillRenderer.exe
+```
+
+GPU commands require a complete built/staged `renderer` directory. The public contract tier requires no licensed Capture One binaries or GPU. This machine used .NET SDK 9.0.300 targeting .NET 8 Windows, MSVC/Visual Studio 2022, Vulkan SDK 1.4.350.0 and 64-bit Python 3.13. Fresh scientific build dependencies were supplied via a **process-local** `PYTHONPATH` to `D:\Library AI testing\SpektraFilm Capture One\.deps313`; restore the environment afterwards and do not install packages globally just to reproduce this build.
+
+For a new runtime package, finish/commit source first, run `Build-Windows.ps1 -BuildPanel -StageRuntime` with the explicit working Python/Vulkan environment, then `Package-Windows.ps1 -Version <version> -Development` for a development build. Public release mode requires the exact clean tag and smoke checks. Source changes during build intentionally invalidate the final manifest.
+
+For installed verification, run the script in a **fresh** Windows PowerShell process and check that process's exit code. Do not inspect a stale caller `$LASTEXITCODE` after invoking a script directly; that produced one false wrapper failure even though the check had passed.
+
+```powershell
+& "$env:WINDIR\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File 'C:\Users\luka\AppData\Local\Programs\Film Tools for Capture One\Start-Spektrafilm.ps1' -CheckOnly
+```
+
+The opt-in `qa/HostSmoke/Run-HostSmoke.ps1` launches and deliberately terminates its own Capture One processes; it is **not** a read-only test. It requires no existing Capture One process, a closed source test catalog without transaction sidecars, a new results directory and a built test hook. It copies the database, isolates look storage, tests native grain only in the disposable catalog, and keeps source originals protected. Use a known test catalog, not a user's production database. It backs up and removes only crash markers generated during its own phases; it refuses pre-existing markers. Do not broaden that cleanup or clear user crash state to force a pass.
+
+Earlier hidden launches stalled, and an immediate deliberate-crash restart stopped in Capture One's own crash detection before the UI loop. The final harness uses a normal interactive window, a delay, a per-run test-hook copy and bounded cleanup of its own markers. Evidence from `host-integration-1` through `-4` contains abandoned attempts; `host-final` is the successful run. Do not count those earlier attempts as passing or change the product compatibility gate to work around test startup.
+
+## Status maintenance
+
+`qa/AUDIT-FIX-STATUS.json` owns task IDs, status, implemented substeps, remaining acceptance work and evidence. This handover owns context, runtime identity and resume instructions. `.test-results/FINAL-RESULT.json` is the completed runtime delivery receipt; keep its runtime commit/package identity distinct from later documentation-only commits.
+
+The sibling audit folder retains baseline findings and line references at `d56ebef`. Its `CURRENT-IMPLEMENTATION.json` and task status overlays mirror the current ledger. `sync-implementation-status.py` refreshes those overlays; `assemble-audit.py` must invoke it after regeneration so progress cannot revert to `not_started`. Refresh the audit ZIP/checksum after editing its documents. Preserve historical probes and their original scope.
+
+At each meaningful checkpoint: update only affected task records; name the actual test evidence and skipped cases; mark a milestone complete only after its result is observed; keep unproven acceptance work partial; record the build, package, installed and remote states separately; commit documentation with the associated change. Before final handoff, validate task IDs/counts and JSON, inspect `git diff --check`, and verify the remote state if reporting it. Do not rebuild or reinstall a working package solely to make its runtime revision equal a documentation commit.

@@ -14,20 +14,20 @@
   "validation": {
     "no_gpu": {
       "status": "passed",
-      "command": "powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File Test-Windows.ps1 -ResultsDirectory '.test-results\\final-contracts'",
-      "summary": ".test-results/final-contracts/summary.json",
+      "command": "pwsh -NoProfile -File Test-Windows.ps1 -ResultsDirectory .test-results/ci-pwsh-fix",
+      "summary": ".test-results/ci-pwsh-fix/summary.json",
       "passes": {
         "renderer_client": 81,
         "state_recovery": 133,
         "viewer_contracts": 9789,
         "manifest": 9,
         "catalog_backup": 17,
-        "installer": 26
+        "installer": 26,
+        "runner_environment": 6
       },
       "initial_failure_fixed": "Relative fixture userData caused incorrect ZIP entry-prefix slicing. Backup root and runner output paths are now normalized; explicit relative-userData regression passes.",
       "not_run": [
-        "GPU tier by design; separate renderer GPU evidence above.",
-        "Host tier by design; separate disposable-host evidence above."
+        "GPU and host are separate tiers with evidence below."
       ],
       "skipped": [
         "Viewer symlink creation lacks privilege."
@@ -37,7 +37,7 @@
       "status": "passed",
       "checks": 9,
       "command": "dotnet run --project tests/renderer/RendererContracts.csproj -c Release -- --gpu build/renderer-gpu-fixture",
-      "maximum_lut_sample_code_error": 5.000000413701855E-10,
+      "maximum_lut_sample_code_error": 5.000000413701855e-10,
       "scope": "Synthetic 8x8 renderer environment isolation, handshake/metrics/cache;33/65 sampled LUT parity. Existing parent-generated data/shaders used for this isolated helper test, not complete release provenance."
     },
     "native_smoke": {
@@ -55,18 +55,59 @@
       "source_catalog_unchanged": true,
       "scope": [
         "Actual supported-host panel and native Export hook binding.",
-        "Disposable DNG development: native6000x4000 and scaled720/1200 sources are16-bit.",
-        "Real GPU float32 transport and TIFF output retain16bits per RGB channel and expected dimensions.",
+        "Capture One logged native6000x4000 DNG development at16bits; explicit scaled720/1200 source assertions passed.",
+        "A1200px scaled frame passed GPU float32 transport and RGB48 TIFF encoding with expected dimensions.",
         "Actual native grain apply and exact prior-value restore.",
         "Legacy quality preferences accepted; each tested slider movement immediately persisted.",
         "Second process restores exposure1.2 and disabled master while tool remains present."
       ],
       "not_proven": [
-        "Native Export dialog command/confirmation user flow; only hook binding and underlying pipeline tested.",
+        "Full24MP GPU export, HostImageSource.RenderExport/ExportAsync end-to-end and native Export dialog/confirmation interaction; actual hook binding plus scaled-frame GPU/encoder path were tested.",
         "Every RAW/camera/profile/host version;16.7 remains unsupported.",
         "Export while navigating to disabled variant, arbitrary host teardown races, crash/power-loss durability and native undo integration."
       ],
-      "test_environment_note": "Root reports a prior deliberate-crash marker blocked host startup; only test-owned crash markers were backed up/cleaned before successful rerun."
+      "test_environment_note": "Deliberate test termination left native crash markers that blocked startup. Only test-created markers were backed up/cleared; corrected harness refuses pre-existing markers and cleaned up its own processes."
+    },
+    "github_ci": {
+      "status": "passed",
+      "commit": "ffc481988eb2e6e7ef7a1379486c4a8b2656ac81",
+      "run_id": 43916882324,
+      "url": "https://github.com/nothing-complex/spektrafilm-for-capture-one/actions/runs/43916882324",
+      "component_assertions": 10062,
+      "passes": {
+        "renderer_client": 81,
+        "state_recovery": 133,
+        "viewer_contracts": 9790,
+        "manifest": 9,
+        "catalog_backup": 17,
+        "installer": 26,
+        "runner_environment": 6
+      },
+      "note": "CI symlink fixture ran; local suite skipped it for unavailable privilege. Count is assertions, not independent end-to-end scenarios.",
+      "initial_failure_resolved": "PowerShell7 ProcessStartInfo inherited incompatible PSModulePath into Windows PowerShell5.1. Child-only reset and six regression assertions fix it; parent environment unchanged."
+    },
+    "fresh_build_and_package": {
+      "status": "passed",
+      "runtime_commit": "ffc481988eb2e6e7ef7a1379486c4a8b2656ac81",
+      "dirty_at_build": false,
+      "source_digest": "cc91c4c6ad494db981ef1a8ff112f1b7167e5884993a494163071ed13803f37b",
+      "archive_sha256": "52ea6f71a6ffa60d9342406f1cfa05df7ac0abbce7357db96b9ae8db8a1bf299",
+      "panel_warnings": 0,
+      "panel_errors": 0,
+      "package_files_verified": 146,
+      "runtime_files_verified": 17,
+      "evidence": [
+        ".test-results/final-build.log",
+        ".test-results/final-package-check.json"
+      ],
+      "scope": "Fresh full source build and smoke, packaged allowlist/hash/provenance and extracted CheckOnly. This is separate from earlier isolated GPU tests using parent-generated data; cross-machine bitwise reproducibility is not established."
+    },
+    "installed_runtime": {
+      "status": "passed",
+      "commit": "ffc481988eb2e6e7ef7a1379486c4a8b2656ac81",
+      "path": "C:\\Users\\luka\\AppData\\Local\\Programs\\Film Tools for Capture One",
+      "check": "Fresh Windows PowerShell process -CheckOnly returned exit0; manifest runtime identity matched.",
+      "evidence": ".test-results/installed-before-audit-20261116/installed-check-passed.txt"
     }
   },
   "known_limitations": [
@@ -80,7 +121,7 @@
     "State backups remain path-keyed archives, not portable catalog identity or automatic cross-directory restore.",
     "No global GPU-memory admission, adaptive viewport quality, cooperative worker cancellation or comprehensive performance budget exists.",
     "Native grain restore receipts remain process-local; preserved values do not imply cross-restart restore ownership.",
-    "No release, GitHub publication or production install is represented by this report."
+    "Runtime ffc4819 is locally installed and source is in draft PR1; no main merge or public GitHub Release has been performed. Documentation updates do not imply a new runtime deployment."
   ],
   "tasks": [
     {
@@ -203,14 +244,15 @@
       "priority": "P1",
       "status": "partial",
       "implemented": [
-        "Installer now uses owned-runtime metadata, recursively preserves unknown files and retains rollback material; inert install fixtures are tracked."
+        "Installer now uses owned-runtime metadata, recursively preserves unknown files and retains rollback material; inert install fixtures are tracked.",
+        "Fresh complete package installed into the real owned application directory after a verified full backup; installed CheckOnly passed and six existing user-data files remained unchanged."
       ],
       "evidence_paths": [
         "Install-Spektrafilm.ps1",
         "tests/installer/Test-Installer.ps1"
       ],
       "remaining_work": [
-        "Inert installer tests pass26assertions. Complete fresh full-build/package/install validation and remaining lock/reparse/shortcut/interrupted-move matrix; no production installation is claimed."
+        "Complete the remaining lock/reparse/shortcut/interrupted-move acceptance matrix beyond the26 inert fixture assertions and observed real upgrade."
       ],
       "original_acceptance_tests": [
         "New install, same-version upgrade, legacy-name upgrade and nested/top-level user-file preservation.",
@@ -225,7 +267,8 @@
       "priority": "P1",
       "status": "partial",
       "implemented": [
-        "Public source-linked state, renderer, viewer and installer contracts plus a no-host entry point are tracked; GPU and host prerequisites are separate."
+        "Public source-linked state, renderer, viewer and installer contracts plus a no-host entry point are tracked; GPU and host prerequisites are separate.",
+        "Public GitHub Windows workflow passed all seven suites, including six PowerShell child-environment regression assertions."
       ],
       "evidence_paths": [
         "Test-Windows.ps1",
@@ -236,7 +279,7 @@
         "qa/HostSmoke"
       ],
       "remaining_work": [
-        "Final no-host runner passes all six requested suites. Run the exact public checkout/CI; complete nonconstant resampling reference and host late-callback seams."
+        "Complete nonconstant resampling reference and host late-callback seams; expand the public test matrix where coverage is still incomplete."
       ],
       "original_acceptance_tests": [
         "Fresh checkout on Windows with .NET SDK runs pure suite without Capture One DLL redistribution.",
@@ -692,7 +735,7 @@
       "priority": "P1",
       "status": "implemented",
       "implemented": [
-        "Every settled viewer resolution uses original high-depth native/scaled processing; disposable-host DNG native6000x4000 and720/1200 sources were observed at16bits, with actual float32 processing and16-bit TIFF output."
+        "Every settled viewer resolution uses original high-depth native/scaled processing. Capture One logged native6000x4000 DNG at16bits; scaled720/1200 assertions and scaled-frame GPU/RGB48 TIFF checks passed. Initial RenderDraft is also original high-depth development."
       ],
       "evidence_paths": [
         "NativePanel/SpatialPreview.cs",
@@ -701,7 +744,7 @@
         ".test-results/host-final/host-smoke.log"
       ],
       "remaining_work": [
-        "Temporary initial draft remains a proxy route and is replaced by final development; complete dark-ramp/source-descriptor, RAW camera/WB/highlight and resolution parity matrix."
+        "Complete dark-ramp/source-descriptor, RAW camera/WB/highlight and resolution parity matrix. Full-resolution GPU export and all source/profile combinations are not established by the scaled-frame host smoke."
       ],
       "original_acceptance_tests": [
         "16-bit dark ramp preserves >256 levels before display conversion",
@@ -1282,7 +1325,8 @@
       "priority": "P2",
       "status": "partial",
       "implemented": [
-        "Protocol verifies parameter-header SHA and float layout; build/package manifests fingerprint runtime files and launcher validates them; LUT embeds parameter contract."
+        "Protocol verifies parameter-header SHA and float layout; build/package manifests fingerprint runtime files and launcher validates them; LUT embeds parameter contract.",
+        "Fresh complete source build/package at clean ffc4819 verified runtime/resources and host dependency hashes; extracted and installed checks passed."
       ],
       "evidence_paths": [
         "NativePanel/OpticalRenderer.cs",
@@ -1293,7 +1337,7 @@
         "Package-Windows.ps1"
       ],
       "remaining_work": [
-        "Finish fresh complete source-build provenance and tamper matrix; presets/metrics do not yet carry complete build identity; legacy developer layouts allow missing manifest."
+        "Complete remaining tamper matrix; presets/metrics do not yet carry complete build identity; legacy developer layouts allow missing manifest."
       ],
       "original_acceptance_tests": [
         "Deliberately outdated shader/curve/schema asset rejects clearly",
@@ -1467,7 +1511,8 @@
       "priority": "P1",
       "status": "partial",
       "implemented": [
-        "Manifest-based build/package/installer checks reject runtime/hash/source mismatches and record source/dependencies; release validation fixtures exist."
+        "Manifest-based build/package/installer checks reject runtime/hash/source mismatches and record source/dependencies; release validation fixtures exist.",
+        "Fresh complete clean ffc4819 build, renderer smoke,146-file package allowlist/hash verification,17 runtime-file verification, extracted and installed checks passed. Archive checksum is recorded in delivery.package."
       ],
       "evidence_paths": [
         "ReleaseManifest.ps1",
@@ -1477,7 +1522,7 @@
         "tests/installer/Test-Manifest.ps1"
       ],
       "remaining_work": [
-        "Fresh complete build and artifact validation are still in progress; do not claim parent-generated build inputs establish same-tree provenance."
+        "Complete cross-clean-checkout generated-data reproducibility and full swapped-asset tamper matrix; record nondeterministic binary fields. A successful build/package is not proof of every original acceptance test."
       ],
       "original_acceptance_tests": [
         "Swap shader, table, stocks, helper or panel from another build and assert packaging/installation refuses.",
@@ -1739,7 +1784,8 @@
       "priority": "P2",
       "status": "partial",
       "implemented": [
-        "Least-permission Windows public contract workflow and separate opt-in host/GPU paths are tracked."
+        "Least-permission Windows public contract workflow and separate opt-in host/GPU paths are tracked.",
+        "Observed GitHub Windows contracts success run43916882324 on ffc4819; no secrets or licensed host binaries are required."
       ],
       "evidence_paths": [
         ".github/workflows/contracts.yml",
@@ -1748,7 +1794,7 @@
         "qa/HostSmoke"
       ],
       "remaining_work": [
-        "Workflow has not been observed on GitHub; add manifest/schema release gates and exact host capability matrix; never run fork code automatically on privileged desktop runners."
+        "Verify actual outside-fork PR behavior; complete automated release gating and exact host capability matrix. Never automatically run fork code on privileged desktop runners."
       ],
       "original_acceptance_tests": [
         "Fork PR can run pure tests without upstream write access or secrets.",
@@ -1876,5 +1922,94 @@
     "implemented": 7,
     "partial": 39,
     "pending": 24
-  }
+  },
+  "last_reconciled": "2026-11-16",
+  "handover": "HANDOVER.md",
+  "runtime_revision": "ffc481988eb2e6e7ef7a1379486c4a8b2656ac81",
+  "status_policy": "Update completed substeps/evidence at each meaningful milestone. Broad tasks stay partial until remaining acceptance work is satisfied. Documentation HEAD can be newer than installed runtime.",
+  "delivery": {
+    "critical_fix_batch": "complete",
+    "full_audit_complete": false,
+    "runtime_commit": "ffc481988eb2e6e7ef7a1379486c4a8b2656ac81",
+    "product_host_test_commit": "285f0aa2dcae6e066080164fc5a2385497968202",
+    "branch": "audit/fixes-2026-11-16",
+    "pull_request": {
+      "url": "https://github.com/nothing-complex/spektrafilm-for-capture-one/pull/1",
+      "state": "open",
+      "draft": true,
+      "merged": false
+    },
+    "public_release": "not_created",
+    "package": {
+      "packageRoot": "D:\\Library AI testing\\SpektraFilm Capture One\\Film-Tools-Audit-Fixes\\.test-results\\final-package-271dea93cb444e67b18043c87781bdec\\Spektrafilm for Capture One",
+      "files": 146,
+      "runtimeFiles": 17,
+      "commit": "ffc481988eb2e6e7ef7a1379486c4a8b2656ac81",
+      "dirty": false,
+      "sourceDigest": "cc91c4c6ad494db981ef1a8ff112f1b7167e5884993a494163071ed13803f37b",
+      "packageSha256": "52ea6f71a6ffa60d9342406f1cfa05df7ac0abbce7357db96b9ae8db8a1bf299",
+      "checkOnly": "passed"
+    },
+    "installation": {
+      "path": "C:\\Users\\luka\\AppData\\Local\\Programs\\Film Tools for Capture One",
+      "desktopShortcut": "C:\\Users\\luka\\Desktop\\Spektrafilm for Capture One.lnk",
+      "backup": ".test-results/installed-before-audit-20261116",
+      "checkOnly": "passed in separate Windows PowerShell process"
+    },
+    "original_user_data_files_verified_unchanged": 6,
+    "original_test_catalog_hash_unchanged": true,
+    "local_evidence_note": "Paths under .test-results/build/dist are ignored local artifacts and are not present in a public clone."
+  },
+  "completed_milestones": [
+    {
+      "id": "DELIVERY-01",
+      "status": "complete",
+      "result": "Isolated worktree and source backup established."
+    },
+    {
+      "id": "DELIVERY-02",
+      "status": "complete",
+      "result": "Bounded critical safeguards implemented and committed in 285f0aa."
+    },
+    {
+      "id": "DELIVERY-03",
+      "status": "complete",
+      "result": "Managed/installer/backup/GPU regression checks passed with recorded scope."
+    },
+    {
+      "id": "DELIVERY-04",
+      "status": "complete",
+      "result": "36 disposable-host assertions passed across two processes; source catalog unchanged."
+    },
+    {
+      "id": "DELIVERY-05",
+      "status": "complete",
+      "result": "PowerShell CI module-path portability failure fixed and regression-tested in ffc4819."
+    },
+    {
+      "id": "DELIVERY-06",
+      "status": "complete",
+      "result": "GitHub Windows contracts run43916882324 passed on ffc4819."
+    },
+    {
+      "id": "DELIVERY-07",
+      "status": "complete",
+      "result": "Fresh complete source build, smoke, clean package provenance and extracted verification passed."
+    },
+    {
+      "id": "DELIVERY-08",
+      "status": "complete",
+      "result": "Old installation, saved user data and shortcut backed up and verified before update."
+    },
+    {
+      "id": "DELIVERY-09",
+      "status": "complete",
+      "result": "Runtime ffc4819 installed, independently checked; six original user-data files unchanged."
+    },
+    {
+      "id": "DELIVERY-10",
+      "status": "complete",
+      "result": "Source published in draft PR1; main remains unmerged and no public Release created."
+    }
+  ]
 }

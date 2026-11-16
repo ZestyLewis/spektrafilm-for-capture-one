@@ -86,6 +86,8 @@ Add `-Gpu -PythonPath $python` after staging a renderer to run the Vulkan smoke 
 
 ## Contribute a compatibility fix
 
+For ongoing development, start with the [handover](HANDOVER.md) and [current audit task status](qa/AUDIT-FIX-STATUS.json). They distinguish completed delivery steps, remaining acceptance work and the tested/installed runtime revision.
+
 Changes for newer Capture One builds can be submitted from a fork. Push your fix to your fork, then open a pull request against `experimental/unchecked-capture-one`. [Fork and pull request instructions](https://github.com/nothing-complex/spektrafilm-for-capture-one/tree/experimental/unchecked-capture-one#contribute-a-compatibility-fix)
 
 ## Support development
