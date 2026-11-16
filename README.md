@@ -66,6 +66,20 @@ Building requires Windows x64, Visual Studio 2022 with Desktop development with 
 
 Use `-VulkanSdkPath` to specify a Vulkan SDK location or `-CaptureOneDirectory` for a custom Capture One installation. The build runs the renderer smoke test by default. See the [upstream build and changes](UPSTREAM-CHANGES.md) and [third-party notices](THIRD-PARTY.md).
 
+## Contribute a compatibility fix
+
+1. [Fork this repository](https://github.com/nothing-complex/spektrafilm-for-capture-one/fork). Clear **Copy the main branch only** if you want the experimental branch in your fork too.
+2. From the local branch containing your fix, run these commands. Replace `YOUR_USERNAME` with your GitHub username.
+
+   ```powershell
+   git remote add my-fork https://github.com/YOUR_USERNAME/spektrafilm-for-capture-one.git
+   git push my-fork HEAD:refs/heads/capture-one-compatibility-fix
+   ```
+
+3. On the original repository, open a new pull request and choose **compare across forks**. Set the base to `experimental/unchecked-capture-one` and the compare branch to `capture-one-compatibility-fix` in your fork. [GitHub's guide to pull requests from forks](https://docs.github.com/en/pull-requests/how-tos/create-pull-requests/creating-a-pull-request-from-a-fork)
+
+Include the exact Capture One version and build number, plus what you tested with a copy of a catalog. Panel startup, the live Viewer, and export are especially helpful to check.
+
 ## Support development
 
 - Capture One integration — [Luka Kauzlaric on Ko-fi](https://ko-fi.com/lukakauzlaric)
