@@ -21,6 +21,12 @@ function Invoke-Test([string] $name,[string] $program,[string[]] $arguments) {
     $start.Arguments=($arguments | ForEach-Object { '"' + (($_ -replace '(\\*)"','$1$1\"') -replace '(\\+)$','$1$1') + '"' }) -join ' '
     $start.UseShellExecute=$false; $start.CreateNoWindow=$true
     $start.RedirectStandardOutput=$true; $start.RedirectStandardError=$true
+    if ([IO.Path]::GetFileName($start.FileName) -ieq 'powershell.exe') {
+        # ProcessStartInfo does not apply pwsh's Windows PowerShell compatibility
+        # environment handling. Its PS7 module path can shadow PS5 built-ins.
+        # Let this child reconstruct its own defaults without changing the caller.
+        $start.EnvironmentVariables.Remove('PSModulePath')
+    }
     $process=[Diagnostics.Process]::Start($start)
     try {
         $stdout=$process.StandardOutput.ReadToEndAsync(); $stderr=$process.StandardError.ReadToEndAsync()
@@ -40,6 +46,7 @@ try {
     if($projects.Count -eq 0){throw 'No managed contract test projects found.'}
     foreach($project in $projects){Invoke-Test $project.BaseName 'dotnet' @('run','--project',$project.FullName,'-c','Release','-p:TargetPlatformDisplayName=Windows')}
     $powershell=Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+    Invoke-Test 'runner-environment' $powershell @('-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',(Join-Path $PSScriptRoot 'tests\installer\Test-RunnerEnvironment.ps1'),'-ResultsDirectory',$ResultsDirectory)
     Invoke-Test 'manifest' $powershell @('-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',(Join-Path $PSScriptRoot 'tests\installer\Test-Manifest.ps1'),'-ResultsDirectory',$ResultsDirectory)
     Invoke-Test 'catalog-backup' $powershell @('-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',(Join-Path $PSScriptRoot 'tests\installer\Test-CatalogBackup.ps1'),'-ResultsDirectory',$ResultsDirectory)
     if(!$SkipInstaller){Invoke-Test 'installer' $powershell @('-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',(Join-Path $PSScriptRoot 'tests\installer\Test-Installer.ps1'),'-ResultsDirectory',$ResultsDirectory)}
